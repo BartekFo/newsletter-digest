@@ -48,8 +48,8 @@ test('items are sorted by date descending (later date appears first)', () => {
 test('meta.newCount appears in header', () => {
   const html = renderHtml([ITEM_A, ITEM_B], META);
   assert.ok(html.includes('2'), 'newCount not found in output');
-  // More precise: the strong tag wraps it
-  assert.ok(html.includes('<strong>2</strong>'), 'newCount not in <strong> tag');
+  // More precise: the count span wraps it
+  assert.ok(html.includes('<span class="count">2</span>'), 'newCount not in count span');
 });
 
 test('HTML escaping: <script> in subject does not appear raw', () => {
@@ -127,6 +127,28 @@ test('item with empty string messageId renders no href, no throw', () => {
   let html;
   assert.doesNotThrow(() => { html = renderHtml([emptyId], META); });
   assert.ok(!html.includes('rfc822msgid:'), 'href rendered despite empty messageId');
+});
+
+test('item with link renders subject as an anchor to the article', () => {
+  const linked = { ...ITEM_A, link: 'https://blog.example.com/the-post' };
+  const html = renderHtml([linked], META);
+
+  assert.ok(html.includes('class="subject-link"'), 'subject-link anchor missing');
+  assert.ok(html.includes('href="https://blog.example.com/the-post"'), 'article href missing');
+  // Gmail deep-link still present alongside.
+  assert.ok(html.includes('rfc822msgid:'), 'Gmail link dropped');
+});
+
+test('item without link renders plain subject (no subject anchor)', () => {
+  const html = renderHtml([ITEM_A], META);
+  assert.ok(!html.includes('class="subject-link"'), 'subject-link rendered despite no link');
+});
+
+test('subject link rejects non-http scheme (no javascript: href)', () => {
+  const evil = { ...ITEM_A, link: 'javascript:alert(1)' };
+  const html = renderHtml([evil], META);
+  assert.ok(!html.includes('javascript:alert(1)'), 'unsafe scheme reached href');
+  assert.ok(!html.includes('class="subject-link"'), 'unsafe link still wrapped subject');
 });
 
 // ---------------------------------------------------------------------------

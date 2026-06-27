@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { parseMail } from '../src/parse.js';
+import { parseMail, extractLink } from '../src/parse.js';
 
 const fixtureRaw = await readFile(
   new URL('./fixtures/sample-newsletter.eml', import.meta.url),
@@ -41,4 +41,38 @@ test('parseMail: result has all required keys', async () => {
   assert.ok('subject' in result);
   assert.ok('date' in result);
   assert.ok('html' in result);
+  assert.ok('link' in result);
+});
+
+test('extractLink: picks up og:url', () => {
+  const html = '<html><head><meta property="og:url" content="https://blog.example.com/post-1"></head><body>hi</body></html>';
+  assert.equal(extractLink(html), 'https://blog.example.com/post-1');
+});
+
+test('extractLink: picks up og:url with reversed attribute order', () => {
+  const html = '<meta content="https://blog.example.com/post-2" property="og:url">';
+  assert.equal(extractLink(html), 'https://blog.example.com/post-2');
+});
+
+test('extractLink: falls back to rel=canonical', () => {
+  const html = '<link rel="canonical" href="https://blog.example.com/canon">';
+  assert.equal(extractLink(html), 'https://blog.example.com/canon');
+});
+
+test('extractLink: og:url wins over canonical', () => {
+  const html =
+    '<meta property="og:url" content="https://blog.example.com/og">' +
+    '<link rel="canonical" href="https://blog.example.com/canon">';
+  assert.equal(extractLink(html), 'https://blog.example.com/og');
+});
+
+test('extractLink: rejects non-http schemes', () => {
+  const html = '<meta property="og:url" content="javascript:alert(1)">';
+  assert.equal(extractLink(html), null);
+});
+
+test('extractLink: returns null when neither present', () => {
+  assert.equal(extractLink('<p>no canonical here</p>'), null);
+  assert.equal(extractLink(''), null);
+  assert.equal(extractLink(null), null);
 });

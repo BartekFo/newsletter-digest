@@ -99,12 +99,22 @@ export async function runDigest(deps) {
         date: mail.date,
         cleanText,
         summary: null,
+        link: mail.link ?? null,
       });
 
-      const summary = await summariseFn(cleanText, config.ollamaModel);
+      try {
+        const summary = await summariseFn(cleanText, config.ollamaModel);
 
-      // Commit summary immediately (commit-per-mail resilience).
-      setSummary(db, mail.messageId, summary);
+        // Commit summary immediately (commit-per-mail resilience).
+        setSummary(db, mail.messageId, summary);
+      } catch (err) {
+        // A failed summary must not abort the run or hide the newsletter. Leave
+        // summary null (render shows "(brak streszczenia)") and keep going so the
+        // item still reaches the digest and the cursor still advances past it.
+        console.error(
+          `[digest] Summary failed for ${mail.messageId}: ${err.message}`,
+        );
+      }
 
       newUids.push(uid);
     }

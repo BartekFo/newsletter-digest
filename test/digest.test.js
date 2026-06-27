@@ -234,76 +234,59 @@ describe('runDigest', () => {
   });
 
   describe('resilience: summarize throws on 2nd mail', () => {
-    it('runDigest rejects and records ok=0', async () => {
-      let callCount = 0;
-      const failingSummarize = async (text, model) => {
-        callCount++;
-        if (callCount === 2) throw new Error('Ollama exploded');
-        const match = FAKE_MAILS.find((m) => m.cleanText === text);
-        return match ? match.summary : 'Fallback.';
-      };
+    let callCount = 0;
+    const failingSummarize = async (text, _model) => {
+      callCount++;
+      if (callCount === 2) throw new Error('Ollama exploded');
+      const match = FAKE_MAILS.find((m) => m.cleanText === text);
+      return match ? match.summary : 'Fallback.';
+    };
 
+    beforeEach(() => {
+      callCount = 0;
+    });
+
+    it('does not reject — completes with both items and records ok=1', async () => {
       const deps = makeDeps(db, { summarize: failingSummarize });
 
-      await assert.rejects(
-        () => runDigest(deps),
-        (err) => {
-          assert.ok(err.message.includes('Ollama exploded'));
-          return true;
-        },
-      );
+      const result = await runDigest(deps);
+      assert.deepEqual(result, { fetched: 2, newItems: 2 });
 
-      // ok=0 run was recorded
       const row = db.prepare('SELECT * FROM runs ORDER BY id DESC LIMIT 1').get();
-      assert.equal(row.ok, 0);
+      assert.equal(row.ok, 1);
     });
 
-    it('first mail summary was saved (commit-per-mail)', async () => {
-      let callCount = 0;
-      const failingSummarize = async (text, model) => {
-        callCount++;
-        if (callCount === 2) throw new Error('Ollama exploded');
-        const match = FAKE_MAILS.find((m) => m.cleanText === text);
-        return match ? match.summary : 'Fallback.';
-      };
-
+    it('first mail keeps its summary, second mail summary is null', async () => {
       const deps = makeDeps(db, { summarize: failingSummarize });
 
-      try {
-        await runDigest(deps);
-      } catch {
-        // expected
-      }
+      await runDigest(deps);
 
-      // First mail (uid=101) was committed with summary
-      const firstMail = FAKE_MAILS[0];
-      assert.equal(isKnown(db, firstMail.parsed.messageId), true);
+      const items = getItemsByUids(db, [101, 102]);
+      assert.equal(items.length, 2);
 
-      const items = getItemsByUids(db, [101]);
-      assert.equal(items.length, 1);
-      assert.equal(items[0].summary, firstMail.summary);
+      const first = items.find((i) => i.uid === 101);
+      const second = items.find((i) => i.uid === 102);
+      assert.equal(first.summary, FAKE_MAILS[0].summary);
+      assert.equal(second.summary, null);
     });
 
-    it('cursor was NOT advanced after failed run', async () => {
-      let callCount = 0;
-      const failingSummarize = async (text, model) => {
-        callCount++;
-        if (callCount === 2) throw new Error('Ollama exploded');
-        const match = FAKE_MAILS.find((m) => m.cleanText === text);
-        return match ? match.summary : 'Fallback.';
-      };
-
+    it('failed-summary item still appears in the digest with a placeholder', async () => {
       const deps = makeDeps(db, { summarize: failingSummarize });
 
-      const uidBefore = getLastUid(db);
+      await runDigest(deps);
 
-      try {
-        await runDigest(deps);
-      } catch {
-        // expected
-      }
+      const html = deps._getHtml();
+      assert.ok(html, 'writeFile should have been called');
+      assert.ok(html.includes('Breaking News'), 'second subject should render');
+      assert.ok(html.includes('(brak streszczenia)'), 'placeholder should render');
+    });
 
-      assert.equal(getLastUid(db), uidBefore);
+    it('cursor IS advanced past the failed mail', async () => {
+      const deps = makeDeps(db, { summarize: failingSummarize });
+
+      await runDigest(deps);
+
+      assert.equal(getLastUid(db), 102);
     });
   });
 });

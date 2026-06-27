@@ -14,6 +14,7 @@ export function initSchema(db) {
       date       TEXT,
       clean_text TEXT,
       summary    TEXT,
+      link       TEXT,
       created_at TEXT
     );
 
@@ -31,6 +32,12 @@ export function initSchema(db) {
       ok          INTEGER
     );
   `);
+
+  // Migration: add link column to pre-existing items tables.
+  const cols = db.prepare('PRAGMA table_info(items)').all();
+  if (!cols.some((c) => c.name === 'link')) {
+    db.exec('ALTER TABLE items ADD COLUMN link TEXT');
+  }
 }
 
 export function getLastUid(db) {
@@ -49,13 +56,13 @@ export function isKnown(db, messageId) {
 }
 
 export function insertItem(db, item) {
-  const { messageId, uid, sender, subject, date, cleanText, summary } = item;
+  const { messageId, uid, sender, subject, date, cleanText, summary, link } = item;
   const result = db
     .prepare(
-      `INSERT OR IGNORE INTO items (message_id, uid, sender, subject, date, clean_text, summary, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      `INSERT OR IGNORE INTO items (message_id, uid, sender, subject, date, clean_text, summary, link, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
     )
-    .run(messageId, uid, sender, subject, date, cleanText, summary ?? null);
+    .run(messageId, uid, sender, subject, date, cleanText, summary ?? null, link ?? null);
   return result.changes === 1;
 }
 
@@ -81,6 +88,7 @@ function rowToItem(row) {
     date: row.date,
     cleanText: row.clean_text,
     summary: row.summary,
+    link: row.link,
     createdAt: row.created_at,
   };
 }
