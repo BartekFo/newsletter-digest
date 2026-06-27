@@ -1,0 +1,23 @@
+{
+  "name": "newsletter-digest",
+  "version": "1.0.0",
+  "description": "Pull newsletters from Gmail IMAP, summarize with Ollama, render digest.html",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@postlight/parser": "^2.2.3",
+    "better-sqlite3": "^12.11.1",
+    "dotenv": "^17.4.2",
+    "imapflow": "^1.4.3",
+    "mailparser": "^3.9.12",
+    "ollama": "^0.6.3"
+  }
+}
