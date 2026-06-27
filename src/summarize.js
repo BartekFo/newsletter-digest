@@ -1,0 +1,35 @@
+import ollama from 'ollama';
+
+const MAX_CHARS = 12000;
+const INSTRUCTION =
+  'Streść poniższy newsletter po polsku w 2-3 zdaniach: co jest w środku i czy warto to czytać. Bez wstępu, sam konkret.\n\n';
+
+/**
+ * Build the prompt string for summarization.
+ * Applies the MAX_CHARS cap before concatenating with the instruction.
+ * @param {string} text
+ * @returns {string}
+ */
+export function buildPrompt(text) {
+  const truncated = text.slice(0, MAX_CHARS);
+  return INSTRUCTION + truncated;
+}
+
+/**
+ * Summarize newsletter text using a local Ollama model.
+ * Returns a 2–3 sentence Polish summary.
+ * @param {string} text
+ * @param {string} [model='qwen3.6:35b-a3b']
+ * @returns {Promise<string>}
+ */
+export async function summarize(text, model = 'qwen3.6:35b-a3b') {
+  const prompt = buildPrompt(text);
+
+  const response = await ollama.chat({
+    model,
+    messages: [{ role: 'user', content: prompt }],
+    options: { think: false },
+  });
+
+  return response.message.content.trim();
+}
