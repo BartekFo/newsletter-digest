@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Dev Digest</title></head>
+<body>
+  <nav id="top-nav">
+    <a href="https://devdigest.example.com">Home</a>
+    <a href="https://devdigest.example.com/archive">Archive</a>
+  </nav>
+
+  <div id="view-in-browser">
+    <a href="https://devdigest.example.com/view?id=2026-06-27">View in browser</a>
+  </div>
+
+  <main>
+    <article>
+      <h1>Understanding V8 Hidden Classes</h1>
+
+      <p>JavaScript engines like V8 use hidden classes (also called shapes or
+      maps) to optimise property access on objects. When you create objects
+      with the same properties in the same order, V8 can reuse the same hidden
+      class, enabling it to use fast inline caches instead of hash lookups.</p>
+
+      <p>The practical consequence is that you should avoid adding properties
+      to objects after construction, and you should initialise all properties
+      in the constructor rather than conditionally later. This single habit
+      can meaningfully reduce memory pressure and improve throughput in
+      hot loops.</p>
+
+      <p>Benchmarks show that objects with stable shapes run property access
+      up to 10x faster than those where shape transitions occur frequently.
+      In real-world applications the gains are typically more modest, but
+      still worthwhile in performance-critical code paths.</p>
+    </article>
+  </main>
+
+  <footer>
+    <p>Dev Digest is published every Friday.</p>
+    <p>
+      <a href="https://devdigest.example.com/unsubscribe?email=reader%40example.com">Unsubscribe</a>
+      &nbsp;&bull;&nbsp;
+      <a href="https://devdigest.example.com/preferences">Manage preferences</a>
+      &nbsp;&bull;&nbsp;
+      <a href="https://devdigest.example.com/privacy">Privacy policy</a>
+    </p>
+    <p>&copy; 2026 Dev Digest. 123 Example St, San Francisco, CA 94107</p>
+    <img src="https://pixel.devdigest.example.com/t/open?uid=abc&cid=xyz" width="1" height="1" alt="" style="display:none">
+  </footer>
+</body>
+</html>

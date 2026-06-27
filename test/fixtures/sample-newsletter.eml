@@ -1,0 +1,86 @@
+From: Tech Weekly <editor@techweekly.example.com>
+To: Reader <reader@example.com>
+Subject: This Week in Tech: AI Breakthroughs and Open Source
+Date: Thu, 27 Jun 2026 08:00:00 +0000
+Message-ID: <tw-2026-06-27-001@techweekly.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="----=_Part_001"
+
+------=_Part_001
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+Tech Weekly - June 27, 2026
+
+AI BREAKTHROUGHS THIS WEEK
+
+Researchers at several universities have published findings showing that
+transformer models trained on synthetic data can achieve remarkable
+generalisation across domains. The paper, released on arXiv, demonstrates
+a 40% improvement on standard benchmarks.
+
+Open source tooling continues to improve. The SQLite team released version
+3.50 with improved full-text search capabilities and better WAL mode
+performance under high concurrency.
+
+---
+Unsubscribe | Manage preferences | View in browser
+This email was sent to reader@example.com
+------=_Part_001
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Tech Weekly</title></head>
+<body>
+  <nav id="header-nav">
+    <a href="https://techweekly.example.com">Home</a>
+    <a href="https://techweekly.example.com/archive">Archive</a>
+    <a href="https://techweekly.example.com/about">About</a>
+  </nav>
+
+  <table role="presentation" width="600">
+    <tr>
+      <td>
+        <h1>Tech Weekly &mdash; June 27, 2026</h1>
+
+        <h2>AI Breakthroughs This Week</h2>
+        <p>Researchers at several universities have published findings showing
+        that transformer models trained on synthetic data can achieve remarkable
+        generalisation across domains. The paper, released on arXiv,
+        demonstrates a 40% improvement on standard benchmarks compared to
+        previous approaches.</p>
+
+        <p>The key insight from the research is that diversity of synthetic
+        training scenarios matters more than sheer volume. Teams that curated
+        scenario variety outperformed those that simply generated more data
+        of the same kind.</p>
+
+        <h2>Open Source Tooling</h2>
+        <p>Open source tooling continues to improve at a rapid pace. The SQLite
+        team released version 3.50 with improved full-text search capabilities
+        and better WAL mode performance under high concurrency workloads.</p>
+
+        <p>The new FTS5 extensions allow phonetic matching and custom
+        tokenizers, making SQLite a more viable option for applications that
+        previously required dedicated search infrastructure.</p>
+      </td>
+    </tr>
+  </table>
+
+  <footer id="email-footer">
+    <p>
+      <a href="https://techweekly.example.com/unsubscribe">Unsubscribe</a>
+      &nbsp;|&nbsp;
+      <a href="https://techweekly.example.com/preferences">Manage preferences</a>
+      &nbsp;|&nbsp;
+      <a href="https://techweekly.example.com/view?id=001">View in browser</a>
+    </p>
+    <p>This email was sent to reader@example.com<br>
+    Tech Weekly &copy; 2026. All rights reserved.</p>
+    <img src="https://track.techweekly.example.com/open?id=001&t=xyz" width="1" height="1" alt="">
+  </footer>
+</body>
+</html>
+------=_Part_001--
