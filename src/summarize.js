@@ -1,7 +1,7 @@
 import ollama from 'ollama';
 
-const MAX_CHARS = 12000;
-const INSTRUCTION =
+export const MAX_CHARS = 12000;
+export const INSTRUCTION =
   'Streść poniższy newsletter po polsku w 2-3 zdaniach: co jest w środku i czy warto to czytać. Bez wstępu, sam konkret.\n\n';
 
 /**
