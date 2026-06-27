@@ -36,9 +36,9 @@ test('extractText: null/undefined returns empty string', async () => {
   assert.equal(text, '');
 });
 
-test('extractText: malformed html returns string (no throw)', async () => {
+test('extractText: malformed html returns empty string (no throw)', async () => {
   const text = await extractText('<<<<not html at all!!>>');
-  assert.ok(typeof text === 'string');
+  assert.equal(text, '');
 });
 
 test('extractText: whitespace-only html returns empty string', async () => {
