@@ -33,6 +33,53 @@ test('buildFetchCriteria — lastUid=0 returns range 1:*', () => {
   assert.equal(result.range, '1:*');
 });
 
+// ── Unit test: NONEXISTENT on empty uid range resolves to [] ───────────────
+
+test('fetchNewMessages — uid mode returns [] when fetch throws NONEXISTENT', async () => {
+  let loggedOut = false;
+  const fakeClient = {
+    async connect() {},
+    async mailboxOpen() {},
+    fetch() {
+      return (async function* () {
+        const err = new Error('Command failed');
+        err.responseStatus = 'NO';
+        err.responseText = 'NONEXISTENT No matching messages';
+        throw err;
+      })();
+    },
+    async logout() {
+      loggedOut = true;
+    },
+  };
+
+  const config = { imapFolder: 'Newsletters', bootstrapDays: 7 };
+  const result = await fetchNewMessages(config, 500, fakeClient);
+
+  assert.deepEqual(result, []);
+  assert.equal(loggedOut, true, 'logout must be called in finally');
+});
+
+test('fetchNewMessages — re-throws genuine (non-NONEXISTENT) errors', async () => {
+  let loggedOut = false;
+  const fakeClient = {
+    async connect() {},
+    async mailboxOpen() {},
+    fetch() {
+      return (async function* () {
+        throw new Error('Authentication failed');
+      })();
+    },
+    async logout() {
+      loggedOut = true;
+    },
+  };
+
+  const config = { imapFolder: 'Newsletters', bootstrapDays: 7 };
+  await assert.rejects(() => fetchNewMessages(config, 500, fakeClient), /Authentication failed/);
+  assert.equal(loggedOut, true, 'logout must still be called in finally');
+});
+
 // ── Integration test (skipped unless credentials are present) ──────────────
 
 const hasCredentials =
