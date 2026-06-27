@@ -42,7 +42,9 @@ test('buildPrompt: long text is truncated to MAX_CHARS', () => {
 
 let ollamaReachable = false;
 try {
-  const res = await fetch('http://localhost:11434/api/tags');
+  const res = await fetch('http://localhost:11434/api/tags', {
+    signal: AbortSignal.timeout(2000),
+  });
   ollamaReachable = res.ok;
 } catch {
   ollamaReachable = false;
