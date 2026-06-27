@@ -39,12 +39,17 @@ export function renderHtml(items, meta) {
           ? `<p class="summary">${escapeHtml(item.summary)}</p>`
           : '<p class="summary no-summary">(brak streszczenia)</p>';
 
+        const sourceLink = item.messageId
+          ? `<a class="source-link" href="${escapeHtml(`https://mail.google.com/mail/u/0/#search/rfc822msgid:${encodeURIComponent(item.messageId)}`)}">Otwórz w Gmailu</a>`
+          : '';
+
         return `
   <article class="item">
     <h2 class="subject">${escapeHtml(item.subject)}</h2>
     <p class="meta">
       <span class="sender">${escapeHtml(item.sender)}</span>
       <span class="date">${escapeHtml(formatDate(item.date))}</span>
+      ${sourceLink}
     </p>
     ${summary}
   </article>`;

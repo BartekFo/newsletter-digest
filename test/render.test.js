@@ -86,3 +86,45 @@ test('empty items array returns valid page with brak message, no throw', () => {
   assert.ok(html.includes('<!DOCTYPE html>'), 'not a valid HTML doc');
   assert.ok(html.includes('Brak nowych newsletterów'), 'missing brak message');
 });
+
+test('item with messageId renders a Gmail deep-link containing rfc822msgid', () => {
+  const html = renderHtml([ITEM_A], META);
+
+  assert.ok(html.includes('rfc822msgid:'), 'href missing rfc822msgid: prefix');
+  // ITEM_A.messageId is '<a@test>' — encodeURIComponent encodes < > @ so check encoded form
+  assert.ok(html.includes(encodeURIComponent('<a@test>')), 'encoded messageId not in href');
+  assert.ok(html.includes('mail.google.com'), 'Gmail domain missing');
+});
+
+test('messageId with special chars (<, &) is URL-encoded and HTML-attribute-escaped in href', () => {
+  const specialItem = {
+    ...ITEM_A,
+    messageId: '<foo+bar&baz@example.com>',
+  };
+  const html = renderHtml([specialItem], META);
+
+  const encoded = encodeURIComponent('<foo+bar&baz@example.com>');
+  // Encoded form must appear in the href
+  assert.ok(html.includes(encoded), 'URL-encoded messageId not found in output');
+  // Raw < must not appear inside the href attribute (escapeHtml turns it to &lt;)
+  // The href value after escapeHtml must not contain a literal unencoded <
+  // We verify by checking the raw character does not appear as part of an href="..." value
+  const hrefMatch = html.match(/href="([^"]+)"/);
+  assert.ok(hrefMatch, 'no href attribute found in output');
+  assert.ok(!hrefMatch[1].includes('<'), 'raw < found unescaped inside href attribute');
+  assert.ok(!hrefMatch[1].includes('&baz'), 'raw & found unescaped inside href attribute (should be %26baz)');
+});
+
+test('item with null messageId renders no href, no throw', () => {
+  const noId = { ...ITEM_A, messageId: null };
+  let html;
+  assert.doesNotThrow(() => { html = renderHtml([noId], META); });
+  assert.ok(!html.includes('rfc822msgid:'), 'href rendered despite null messageId');
+});
+
+test('item with empty string messageId renders no href, no throw', () => {
+  const emptyId = { ...ITEM_A, messageId: '' };
+  let html;
+  assert.doesNotThrow(() => { html = renderHtml([emptyId], META); });
+  assert.ok(!html.includes('rfc822msgid:'), 'href rendered despite empty messageId');
+});

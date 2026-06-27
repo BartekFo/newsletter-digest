@@ -148,7 +148,7 @@ if (isMain) {
     } catch (err) {
       console.error(`[digest] Configuration error: ${err.message}`);
       process.exitCode = 1;
-      process.exit();
+      return;
     }
 
     const db = openDb(config.dbPath);
