@@ -8,6 +8,8 @@ import { parseMail } from './parse.js';
 import { extractText } from './extract.js';
 import { summarize } from './summarize.js';
 import { renderHtml } from './render.js';
+import { fetchWeather } from './weather.js';
+import { fetchTopStories } from './hackernews.js';
 import {
   openDb,
   initSchema,
@@ -44,6 +46,8 @@ function openFile(filePath) {
  *   extractText(html)                 → Promise<string>
  *   summarize(text, model)            → Promise<string>
  *   renderHtml(items, meta)           → string
+ *   fetchWeather(config)              → Promise<object|null>
+ *   fetchTopStories(n)                → Promise<object[]|null>
  *   writeFile(path, content)          → Promise<void>
  *   openFile(path)                    → Promise<void>
  *   now()                             → Date
@@ -59,6 +63,8 @@ export async function runDigest(deps) {
     extractText: extract,
     summarize: summariseFn,
     renderHtml: render,
+    fetchWeather: weatherFn,
+    fetchTopStories: hackernewsFn,
     writeFile,
     openFile: open,
     now,
@@ -109,7 +115,19 @@ export async function runDigest(deps) {
     }
 
     const items = getItemsByUids(db, newUids);
-    const html = render(items, { ranAt: now().toISOString(), newCount: newUids.length });
+
+    // Optional extras — failure-safe: a dead API must not abort the digest.
+    const [weather, hackernews] = await Promise.all([
+      weatherFn(config).catch(() => null),
+      hackernewsFn(6).catch(() => null),
+    ]);
+
+    const html = render(items, {
+      ranAt: now().toISOString(),
+      newCount: newUids.length,
+      weather,
+      hackernews,
+    });
 
     await writeFile(config.outPath, html);
 
@@ -163,6 +181,8 @@ if (isMain) {
         extractText,
         summarize,
         renderHtml,
+        fetchWeather,
+        fetchTopStories,
         writeFile: (path, content) => fsWriteFile(path, content, 'utf8'),
         openFile,
         now: () => new Date(),

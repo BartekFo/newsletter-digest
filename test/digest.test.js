@@ -75,6 +75,24 @@ function makeDeps(db, overrides = {}) {
       const match = FAKE_MAILS.find((m) => m.cleanText === text);
       return match ? match.summary : 'Brak streszczenia.';
     },
+    fetchWeather: async (_config) => ({
+      city: 'Testowo',
+      temp: 12,
+      code: 3,
+      description: 'Pochmurno',
+      max: 15,
+      min: 7,
+      precipProb: 40,
+    }),
+    fetchTopStories: async (_n) => [
+      {
+        title: 'Fake HN Story',
+        url: 'https://example.com/story',
+        score: 123,
+        comments: 45,
+        hnUrl: 'https://news.ycombinator.com/item?id=1',
+      },
+    ],
     renderHtml,
     writeFile: async (_path, html) => {
       capturedHtml = html;
@@ -138,6 +156,39 @@ describe('runDigest', () => {
       assert.ok(html.includes(mail.parsed.subject), `html should contain subject: ${mail.parsed.subject}`);
       assert.ok(html.includes(mail.summary), `html should contain summary: ${mail.summary}`);
     }
+  });
+
+  it('rendered html contains weather and HackerNews data', async () => {
+    const deps = makeDeps(db);
+    await runDigest(deps);
+
+    const html = deps._getHtml();
+    assert.ok(html.includes('Testowo'), 'html should contain weather city');
+    assert.ok(html.includes('12°C'), 'html should contain current temperature');
+    assert.ok(html.includes('Fake HN Story'), 'html should contain HN story title');
+  });
+
+  it('survives null weather and hackernews (failure-safe)', async () => {
+    const deps = makeDeps(db, {
+      fetchWeather: async () => null,
+      fetchTopStories: async () => null,
+    });
+
+    const result = await runDigest(deps);
+    assert.deepEqual(result, { fetched: 2, newItems: 2 });
+
+    const html = deps._getHtml();
+    assert.ok(html.includes('<!DOCTYPE html>'), 'still a valid HTML doc');
+  });
+
+  it('survives a rejected extras fetch (failure-safe)', async () => {
+    const deps = makeDeps(db, {
+      fetchWeather: async () => { throw new Error('weather API down'); },
+      fetchTopStories: async () => { throw new Error('HN API down'); },
+    });
+
+    const result = await runDigest(deps);
+    assert.deepEqual(result, { fetched: 2, newItems: 2 });
   });
 
   it('advances the UID cursor to the max uid after success', async () => {

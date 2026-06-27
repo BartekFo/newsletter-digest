@@ -128,3 +128,68 @@ test('item with empty string messageId renders no href, no throw', () => {
   assert.doesNotThrow(() => { html = renderHtml([emptyId], META); });
   assert.ok(!html.includes('rfc822msgid:'), 'href rendered despite empty messageId');
 });
+
+// ---------------------------------------------------------------------------
+// Weather banner
+// ---------------------------------------------------------------------------
+
+const WEATHER = {
+  city: 'Warszawa',
+  temp: 18,
+  code: 2,
+  description: 'Częściowe zachmurzenie',
+  max: 22,
+  min: 11,
+  precipProb: 30,
+};
+
+test('weather: banner renders city, temp, description and range', () => {
+  const html = renderHtml([ITEM_A], { ...META, weather: WEATHER });
+
+  assert.ok(html.includes('Warszawa'), 'missing weather city');
+  assert.ok(html.includes('18°C'), 'missing current temp');
+  assert.ok(html.includes('Częściowe zachmurzenie'), 'missing description');
+  assert.ok(html.includes('22'), 'missing max');
+  assert.ok(html.includes('30%'), 'missing precip probability');
+});
+
+test('weather: no banner when weather is null/absent', () => {
+  const html = renderHtml([ITEM_A], META);
+  assert.ok(!html.includes('class="weather"'), 'weather banner rendered despite no data');
+});
+
+// ---------------------------------------------------------------------------
+// HackerNews section
+// ---------------------------------------------------------------------------
+
+const HN = [
+  { title: 'Story One', url: 'https://example.com/1', score: 250, comments: 80, hnUrl: 'https://news.ycombinator.com/item?id=1' },
+  { title: 'Ask HN: something', url: 'https://news.ycombinator.com/item?id=2', score: 90, comments: 40, hnUrl: 'https://news.ycombinator.com/item?id=2' },
+];
+
+test('hackernews: section renders titles, links and scores', () => {
+  const html = renderHtml([ITEM_A], { ...META, hackernews: HN });
+
+  assert.ok(html.includes('HackerNews Top 2'), 'missing HN heading with count');
+  assert.ok(html.includes('Story One'), 'missing first story title');
+  assert.ok(html.includes('Ask HN: something'), 'missing second story title');
+  assert.ok(html.includes('https://example.com/1'), 'missing external url');
+  assert.ok(html.includes('news.ycombinator.com/item?id=1'), 'missing HN comments link');
+  assert.ok(html.includes('250'), 'missing score');
+});
+
+test('hackernews: no section when list is null or empty', () => {
+  const htmlNull = renderHtml([ITEM_A], META);
+  assert.ok(!htmlNull.includes('class="hn"'), 'HN section rendered despite no data');
+
+  const htmlEmpty = renderHtml([ITEM_A], { ...META, hackernews: [] });
+  assert.ok(!htmlEmpty.includes('class="hn"'), 'HN section rendered for empty list');
+});
+
+test('hackernews: malicious title is escaped', () => {
+  const evil = [{ title: '<script>alert(1)</script>', url: 'https://x.com', score: 1, comments: 0, hnUrl: 'https://news.ycombinator.com/item?id=9' }];
+  const html = renderHtml([ITEM_A], { ...META, hackernews: evil });
+
+  assert.ok(!html.includes('<script>alert(1)</script>'), 'raw script in HN title not escaped');
+  assert.ok(html.includes('&lt;script&gt;'), 'escaped script not found');
+});

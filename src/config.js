@@ -6,7 +6,8 @@ import 'dotenv/config';
  *
  * @param {NodeJS.ProcessEnv} env - environment variables to read from
  * @returns {{ gmailUser: string, gmailAppPassword: string, imapFolder: string,
- *             bootstrapDays: number, ollamaModel: string, dbPath: string, outPath: string }}
+ *             bootstrapDays: number, ollamaModel: string, dbPath: string, outPath: string,
+ *             weatherCity: string }}
  */
 export function loadConfig(env = process.env) {
   if (!env.GMAIL_USER) {
@@ -24,6 +25,7 @@ export function loadConfig(env = process.env) {
     ollamaModel: env.OLLAMA_MODEL ?? 'qwen3.6:35b-a3b',
     dbPath: env.DB_PATH ?? './digest.db',
     outPath: env.OUT_PATH ?? './digest.html',
+    weatherCity: env.WEATHER_CITY ?? 'Warsaw',
   };
 }
 
