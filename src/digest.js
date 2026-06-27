@@ -3,6 +3,7 @@ import { writeFile as fsWriteFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 import { loadConfig } from './config.js';
+import { createLogger, silentLogger } from './logger.js';
 import { fetchNewMessages } from './imap.js';
 import { parseMail } from './parse.js';
 import { extractText } from './extract.js';
@@ -51,6 +52,7 @@ function openFile(filePath) {
  *   writeFile(path, content)          → Promise<void>
  *   openFile(path)                    → Promise<void>
  *   now()                             → Date
+ *   logger                            → pino-compatible logger (optional; silent by default)
  *
  * @returns {Promise<{fetched: number, newItems: number}>}
  */
@@ -68,6 +70,7 @@ export async function runDigest(deps) {
     writeFile,
     openFile: open,
     now,
+    logger = silentLogger,
   } = deps;
 
   const startMs = Date.now();
@@ -76,7 +79,10 @@ export async function runDigest(deps) {
   let fetched, newUids;
 
   try {
+    logger.info({ lastUid, folder: config.imapFolder }, 'Łączę z Gmail, pobieram nowe wiadomości…');
     fetched = await fetch(config, lastUid);
+    logger.info({ fetched: fetched.length }, 'Pobrano wiadomości z IMAP');
+
     let maxUid = lastUid ?? 0;
     newUids = [];
 
@@ -87,7 +93,10 @@ export async function runDigest(deps) {
       // we don't re-fetch them on the next run (dedup is handled by isKnown).
       maxUid = Math.max(maxUid, uid);
 
-      if (isKnown(db, mail.messageId)) continue;
+      if (isKnown(db, mail.messageId)) {
+        logger.debug({ uid, subject: mail.subject }, 'Pomijam — już znana');
+        continue;
+      }
 
       const cleanText = await extract(mail.html);
 
@@ -102,17 +111,28 @@ export async function runDigest(deps) {
         link: mail.link ?? null,
       });
 
+      logger.info(
+        { uid, sender: mail.sender, subject: mail.subject, model: config.ollamaModel },
+        'Streszczam (lokalny model — może chwilę potrwać)…',
+      );
+      const summaryStartMs = Date.now();
+
       try {
         const summary = await summariseFn(cleanText, config.ollamaModel);
 
         // Commit summary immediately (commit-per-mail resilience).
         setSummary(db, mail.messageId, summary);
+        logger.info(
+          { uid, subject: mail.subject, ms: Date.now() - summaryStartMs },
+          'Streszczono',
+        );
       } catch (err) {
         // A failed summary must not abort the run or hide the newsletter. Leave
         // summary null (render shows "(brak streszczenia)") and keep going so the
         // item still reaches the digest and the cursor still advances past it.
-        console.error(
-          `[digest] Summary failed for ${mail.messageId}: ${err.message}`,
+        logger.error(
+          { uid, messageId: mail.messageId, err: err.message, ms: Date.now() - summaryStartMs },
+          'Streszczenie nieudane — pomijam, zostawiam placeholder',
         );
       }
 
@@ -124,12 +144,15 @@ export async function runDigest(deps) {
       setLastUid(db, maxUid);
     }
 
+    logger.info({ newItems: newUids.length }, 'Przetworzono maile, pobieram pogodę i HackerNews…');
     const items = getItemsByUids(db, newUids);
 
     // Optional extras — failure-safe: a dead API must not abort the digest.
+    // Each fn logs its own failure via the injected logger and returns null;
+    // the .catch guards against any unexpected throw.
     const [weather, hackernews] = await Promise.all([
-      weatherFn(config).catch(() => null),
-      hackernewsFn(6).catch(() => null),
+      weatherFn(config, logger).catch(() => null),
+      hackernewsFn(6, logger).catch(() => null),
     ]);
 
     const html = render(items, {
@@ -140,18 +163,29 @@ export async function runDigest(deps) {
     });
 
     await writeFile(config.outPath, html);
+    logger.info({ outPath: config.outPath }, 'Zapisano digest');
 
+    const durationMs = Date.now() - startMs;
     recordRun(db, {
       fetched: fetched.length,
       newItems: newUids.length,
-      durationMs: Date.now() - startMs,
+      durationMs,
       ok: 1,
     });
 
     await open(config.outPath);
 
+    logger.info(
+      { fetched: fetched.length, newItems: newUids.length, durationMs },
+      'Gotowe',
+    );
+
     return { fetched: fetched.length, newItems: newUids.length };
   } catch (err) {
+    logger.error(
+      { err: err.message, durationMs: Date.now() - startMs },
+      'Bieg nieudany',
+    );
     recordRun(db, {
       fetched: fetched?.length ?? 0,
       newItems: newUids?.length ?? 0,
@@ -174,16 +208,17 @@ if (isMain) {
     try {
       config = loadConfig();
     } catch (err) {
-      console.error(`[digest] Configuration error: ${err.message}`);
+      createLogger().error({ err: err.message }, 'Błąd konfiguracji');
       process.exitCode = 1;
       return;
     }
 
+    const logger = createLogger(config.logLevel);
     const db = openDb(config.dbPath);
     initSchema(db);
 
     try {
-      const result = await runDigest({
+      await runDigest({
         db,
         config,
         fetchNewMessages,
@@ -196,13 +231,10 @@ if (isMain) {
         writeFile: (path, content) => fsWriteFile(path, content, 'utf8'),
         openFile,
         now: () => new Date(),
+        logger,
       });
-
-      console.log(
-        `[digest] Done — fetched ${result.fetched}, new ${result.newItems}. Output: ${config.outPath}`,
-      );
-    } catch (err) {
-      console.error(`[digest] Run failed: ${err.message}`);
+    } catch {
+      // runDigest already logged the failure; just set the exit code.
       process.exitCode = 1;
     }
   })();

@@ -1,3 +1,5 @@
+import { silentLogger } from './logger.js';
+
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const TIMEOUT_MS = 5000;
@@ -69,10 +71,11 @@ export async function geocodeCity(city) {
  * render even when this API is unreachable).
  *
  * @param {{ weatherCity: string }} config
+ * @param {import('pino').Logger} [logger=silentLogger]
  * @returns {Promise<{city: string, temp: number, code: number, description: string,
  *   max: number, min: number, precipProb: number} | null>}
  */
-export async function fetchWeather(config) {
+export async function fetchWeather(config, logger = silentLogger) {
   try {
     const { lat, lon, name } = await geocodeCity(config.weatherCity);
 
@@ -102,7 +105,7 @@ export async function fetchWeather(config) {
       precipProb: data.daily?.precipitation_probability_max?.[0] ?? 0,
     };
   } catch (err) {
-    console.warn(`[digest] Weather unavailable: ${err.message}`);
+    logger.warn({ err: err.message, city: config.weatherCity }, 'Pogoda niedostępna');
     return null;
   }
 }

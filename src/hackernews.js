@@ -1,3 +1,5 @@
+import { silentLogger } from './logger.js';
+
 const TOP_STORIES_URL = 'https://hacker-news.firebaseio.com/v0/topstories.json';
 const ITEM_URL = 'https://hacker-news.firebaseio.com/v0/item';
 const TIMEOUT_MS = 5000;
@@ -32,9 +34,10 @@ async function fetchStory(id) {
  * — the digest must render even when HN is unreachable).
  *
  * @param {number} [n=6]
+ * @param {import('pino').Logger} [logger=silentLogger]
  * @returns {Promise<Array<{title: string, url: string, score: number, comments: number, hnUrl: string}> | null>}
  */
-export async function fetchTopStories(n = 6) {
+export async function fetchTopStories(n = 6, logger = silentLogger) {
   try {
     const res = await fetch(TOP_STORIES_URL, {
       signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -47,7 +50,7 @@ export async function fetchTopStories(n = 6) {
     const stories = await Promise.all(topIds.map(fetchStory));
     return stories.filter(Boolean);
   } catch (err) {
-    console.warn(`[digest] HackerNews unavailable: ${err.message}`);
+    logger.warn({ err: err.message }, 'HackerNews niedostępny');
     return null;
   }
 }

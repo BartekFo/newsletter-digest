@@ -7,7 +7,7 @@ import 'dotenv/config';
  * @param {NodeJS.ProcessEnv} env - environment variables to read from
  * @returns {{ gmailUser: string, gmailAppPassword: string, imapFolder: string,
  *             bootstrapDays: number, ollamaModel: string, dbPath: string, outPath: string,
- *             weatherCity: string }}
+ *             weatherCity: string, logLevel: string }}
  */
 export function loadConfig(env = process.env) {
   if (!env.GMAIL_USER) {
@@ -26,6 +26,7 @@ export function loadConfig(env = process.env) {
     dbPath: env.DB_PATH ?? './digest.db',
     outPath: env.OUT_PATH ?? './digest.html',
     weatherCity: env.WEATHER_CITY ?? 'Warsaw',
+    logLevel: env.LOG_LEVEL ?? 'info',
   };
 }
 
