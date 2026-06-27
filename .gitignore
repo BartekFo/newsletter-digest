@@ -1,0 +1,6 @@
+node_modules/
+.env
+digest.db
+digest.html
+*.log
+.DS_Store
