@@ -4,3 +4,4 @@ digest.db
 digest.html
 *.log
 .DS_Store
+.superpowers/

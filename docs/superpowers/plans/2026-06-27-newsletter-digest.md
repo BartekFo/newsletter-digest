@@ -49,7 +49,7 @@ Mapowanie faza → sekcja speca: Faza 0=Konfiguracja, 1=Model danych+Kursor+Odpo
 
 ---
 
-## Faza 0 — Scaffold & config
+## Task 0 — Faza 0: Scaffold & config
 
 **Cel fazy:** projekt instaluje się i ładuje konfigurację. Fundament pod resztę.
 
@@ -70,7 +70,7 @@ Mapowanie faza → sekcja speca: Faza 0=Konfiguracja, 1=Model danych+Kursor+Odpo
 
 ---
 
-## Faza 1 — Storage layer (`store.js`)
+## Task 1 — Faza 1: Storage layer (`store.js`)
 
 **Cel fazy:** w pełni testowalna warstwa SQLite. Zero sieci. Najmocniejszy fundament TDD.
 
@@ -100,7 +100,7 @@ Mapowanie faza → sekcja speca: Faza 0=Konfiguracja, 1=Model danych+Kursor+Odpo
 
 ---
 
-## Faza 2 — Mail parse & extract (`parse.js`, `extract.js`)
+## Task 2 — Faza 2: Mail parse & extract (`parse.js`, `extract.js`)
 
 **Cel fazy:** surowy mail → czysty tekst. Czyste funkcje, testowane na fixture'ach offline. Tu mieszka najupierdliwsza część (różne szablony nadawców).
 
@@ -121,7 +121,7 @@ Mapowanie faza → sekcja speca: Faza 0=Konfiguracja, 1=Model danych+Kursor+Odpo
 
 ---
 
-## Faza 3 — IMAP fetch (`imap.js`)
+## Task 3 — Faza 3: IMAP fetch (`imap.js`)
 
 **Cel fazy:** pierwszy realny kontakt z Gmailem. Kursor: bootstrap vs przyrost.
 
@@ -144,7 +144,7 @@ Mapowanie faza → sekcja speca: Faza 0=Konfiguracja, 1=Model danych+Kursor+Odpo
 
 ---
 
-## Faza 4 — Summarize (`summarize.js`)
+## Task 4 — Faza 4: Summarize (`summarize.js`)
 
 **Cel fazy:** clean_text → polskie summary z Ollamy. Drugi realny I/O.
 
@@ -164,7 +164,7 @@ Mapowanie faza → sekcja speca: Faza 0=Konfiguracja, 1=Model danych+Kursor+Odpo
 
 ---
 
-## Faza 5 — Render (`render.js`)
+## Task 5 — Faza 5: Render (`render.js`)
 
 **Cel fazy:** items[] → `digest.html`. Czysta funkcja, testowalna offline.
 
@@ -184,7 +184,7 @@ Mapowanie faza → sekcja speca: Faza 0=Konfiguracja, 1=Model danych+Kursor+Odpo
 
 ---
 
-## Faza 6 — Orchestration (`digest.js`) + odpalanie
+## Task 6 — Faza 6: Orchestration (`digest.js`) + odpalanie
 
 **Cel fazy:** spięcie wszystkiego w działający `node digest.js`. End-to-end na realnej skrzynce.
 
