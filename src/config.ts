@@ -24,7 +24,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     gmailAppPassword: env.GMAIL_APP_PASSWORD,
     imapFolder: env.IMAP_FOLDER ?? 'Newsletters',
     bootstrapDays: env.BOOTSTRAP_DAYS ? Number(env.BOOTSTRAP_DAYS) : 7,
-    ollamaModel: env.OLLAMA_MODEL ?? 'qwen3.6:35b-a3b',
+    ollamaModel: env.OLLAMA_MODEL ?? 'gemma4:12b',
     dbPath: env.DB_PATH ?? './digest.db',
     outPath: env.OUT_PATH ?? './digest.html',
     weatherCity: env.WEATHER_CITY ?? 'Warsaw',

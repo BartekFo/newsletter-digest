@@ -54,13 +54,22 @@ try {
 test(
   'summarize: returns non-empty Polish summary from Ollama (integration)',
   { skip: !ollamaReachable ? 'Ollama not reachable — skipping integration test' : false, timeout: 120_000 },
-  async () => {
+  async (t) => {
     const sample =
       'This week: React 19 is out with new hooks for async state, ' +
       'TypeScript 5.5 ships satisfies improvements, and Bun 1.2 adds ' +
       'native S3 support. Plenty of tooling news worth catching up on.';
 
-    const summary = await summarize(sample, 'qwen3.6:35b-a3b');
+    let summary;
+    try {
+      summary = await summarize(sample, 'gemma4:12b');
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('not found')) {
+        t.skip(`Ollama model not installed: ${err.message}`);
+        return;
+      }
+      throw err;
+    }
 
     assert.ok(typeof summary === 'string', 'Summary must be a string');
     assert.ok(summary.length > 0, 'Summary must be non-empty');

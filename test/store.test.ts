@@ -12,6 +12,11 @@ import {
   setSummary,
   recordRun,
   getItemsByUids,
+  getItemByMessageId,
+  addRunItems,
+  getItemsByRunId,
+  getLatestNonEmptyRun,
+  getRunSummaries,
 } from '../src/store.js';
 
 const SAMPLE_ITEM = {
@@ -48,6 +53,7 @@ test('initSchema creates tables; calling twice does not throw', () => {
     .map((r) => r.name);
 
   assert.ok(tables.includes('items'));
+  assert.ok(tables.includes('run_items'));
   assert.ok(tables.includes('state'));
   assert.ok(tables.includes('runs'));
   db.close();
@@ -122,9 +128,10 @@ test('setSummary updates the summary for a known item', () => {
 
 test('recordRun appends a row to runs', () => {
   const db = freshDb();
-  recordRun(db, { fetched: 10, newItems: 3, durationMs: 500, ok: true });
+  const runId = recordRun(db, { fetched: 10, newItems: 3, durationMs: 500, ok: true });
   const count = db.prepare('SELECT COUNT(*) as c FROM runs').get().c;
   assert.equal(count, 1);
+  assert.equal(runId, 1);
   db.close();
 });
 
@@ -164,5 +171,51 @@ test('getItemsByUids returns empty array for empty uids list', () => {
   const db = freshDb();
   const results = getItemsByUids(db, []);
   assert.deepEqual(results, []);
+  db.close();
+});
+
+test('getItemByMessageId returns matching item or null', () => {
+  const db = freshDb();
+  insertItem(db, SAMPLE_ITEM);
+
+  const found = getItemByMessageId(db, SAMPLE_ITEM.messageId);
+  assert.equal(found.messageId, SAMPLE_ITEM.messageId);
+  assert.equal(found.cleanText, SAMPLE_ITEM.cleanText);
+  assert.equal(getItemByMessageId(db, '<missing@example.com>'), null);
+  db.close();
+});
+
+test('addRunItems links a run to items and getItemsByRunId returns snapshot items', () => {
+  const db = freshDb();
+  const item2 = { ...SAMPLE_ITEM, messageId: '<test-2@example.com>', uid: 102, subject: 'Second' };
+  insertItem(db, SAMPLE_ITEM);
+  insertItem(db, item2);
+
+  const runId = recordRun(db, { fetched: 2, newItems: 2, durationMs: 10, ok: true });
+  addRunItems(db, runId, [SAMPLE_ITEM.messageId, item2.messageId]);
+
+  const items = getItemsByRunId(db, runId);
+  assert.equal(items.length, 2);
+  assert.deepEqual(items.map((item) => item.messageId).sort(), [SAMPLE_ITEM.messageId, item2.messageId].sort());
+  db.close();
+});
+
+test('getRunSummaries and getLatestNonEmptyRun ignore empty technical runs', () => {
+  const db = freshDb();
+  insertItem(db, SAMPLE_ITEM);
+
+  const emptyRunId = recordRun(db, { fetched: 0, newItems: 0, durationMs: 5, ok: true });
+  const nonEmptyRunId = recordRun(db, { fetched: 1, newItems: 1, durationMs: 10, ok: true });
+  addRunItems(db, nonEmptyRunId, [SAMPLE_ITEM.messageId]);
+
+  const summaries = getRunSummaries(db);
+  assert.equal(summaries.length, 1);
+  assert.equal(summaries[0].id, nonEmptyRunId);
+  assert.equal(summaries[0].newItems, 1);
+  assert.equal(summaries[0].itemCount, 1);
+  assert.notEqual(summaries[0].id, emptyRunId);
+
+  const latest = getLatestNonEmptyRun(db);
+  assert.equal(latest.id, nonEmptyRunId);
   db.close();
 });

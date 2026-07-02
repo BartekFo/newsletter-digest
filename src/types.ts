@@ -62,9 +62,17 @@ export interface HackerNewsStory {
 export interface DigestMeta {
   ranAt: string;
   newCount: number;
+  runId?: number;
   gmailUser?: string;
   weather?: WeatherSummary | null;
   hackernews?: HackerNewsStory[] | null;
+}
+
+export interface RunSummary {
+  id: number;
+  ranAt: string;
+  newItems: number;
+  itemCount: number;
 }
 
 export type AppLogger = Logger;

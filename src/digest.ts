@@ -20,6 +20,7 @@ import {
   insertItem,
   setSummary,
   recordRun,
+  addRunItems,
   getItemsByUids,
 } from './store.js';
 import type {
@@ -93,9 +94,9 @@ export interface DigestDeps {
  *   now()                             → Date
  *   logger                            → pino-compatible logger (optional; silent by default)
  *
- * @returns {Promise<{fetched: number, newItems: number}>}
+ * @returns {Promise<{fetched: number, newItems: number, runId: number | null}>}
  */
-export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; newItems: number }> {
+export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; newItems: number; runId: number | null }> {
   const {
     db,
     config,
@@ -117,6 +118,7 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
 
   let fetched: FetchedMessage[] | undefined;
   let newUids: number[] = [];
+  const newMessageIds: string[] = [];
 
   try {
     logger.info({ lastUid, folder: config.imapFolder }, 'Łączę z Gmail, pobieram nowe wiadomości…');
@@ -177,6 +179,7 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
       }
 
       newUids.push(uid);
+      newMessageIds.push(mail.messageId);
     }
 
     // Advance cursor only after the full loop completes without throwing.
@@ -207,12 +210,13 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
     logger.info({ outPath: config.outPath }, 'Zapisano digest');
 
     const durationMs = Date.now() - startMs;
-    recordRun(db, {
+    const runId = recordRun(db, {
       fetched: fetched.length,
       newItems: newUids.length,
       durationMs,
       ok: 1,
     });
+    addRunItems(db, runId, newMessageIds);
 
     await open(config.outPath);
 
@@ -221,7 +225,7 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
       'Gotowe',
     );
 
-    return { fetched: fetched.length, newItems: newUids.length };
+    return { fetched: fetched.length, newItems: newUids.length, runId: newMessageIds.length > 0 ? runId : null };
   } catch (err) {
     logger.error(
       { err: errorMessage(err), durationMs: Date.now() - startMs },

@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import type { Db, DigestItem } from './types.js';
+import type { Db, DigestItem, RunSummary } from './types.js';
 
 interface StateRow {
   value: string;
@@ -19,6 +19,13 @@ interface ItemRow {
   summary: string | null;
   link: string | null;
   created_at: string;
+}
+
+interface RunSummaryRow {
+  id: number;
+  ran_at: string;
+  new_items: number;
+  item_count: number;
 }
 
 export interface RunRecord {
@@ -59,6 +66,14 @@ export function initSchema(db: Db): void {
       duration_ms INTEGER,
       ok          INTEGER
     );
+
+    CREATE TABLE IF NOT EXISTS run_items (
+      run_id     INTEGER NOT NULL,
+      message_id TEXT NOT NULL,
+      PRIMARY KEY (run_id, message_id),
+      FOREIGN KEY (run_id) REFERENCES runs(id),
+      FOREIGN KEY (message_id) REFERENCES items(message_id)
+    );
   `);
 
   // Migration: add link column to pre-existing items tables.
@@ -98,13 +113,14 @@ export function setSummary(db: Db, messageId: string, summary: string): void {
   db.prepare('UPDATE items SET summary = ? WHERE message_id = ?').run(summary, messageId);
 }
 
-export function recordRun(db: Db, { fetched, newItems, durationMs, ok }: RunRecord): void {
-  db
+export function recordRun(db: Db, { fetched, newItems, durationMs, ok }: RunRecord): number {
+  const result = db
     .prepare(
       `INSERT INTO runs (ran_at, fetched, new_items, duration_ms, ok)
        VALUES (datetime('now'), ?, ?, ?, ?)`,
     )
     .run(fetched, newItems, durationMs, ok ? 1 : 0);
+  return Number(result.lastInsertRowid);
 }
 
 function rowToItem(row: ItemRow): DigestItem {
@@ -125,5 +141,76 @@ export function getItemsByUids(db: Db, uids: number[]): DigestItem[] {
   if (uids.length === 0) return [];
   const placeholders = uids.map(() => '?').join(', ');
   const rows = db.prepare(`SELECT * FROM items WHERE uid IN (${placeholders})`).all(...uids) as ItemRow[];
+  return rows.map(rowToItem);
+}
+
+export function getItemByMessageId(db: Db, messageId: string): DigestItem | null {
+  const row = db.prepare('SELECT * FROM items WHERE message_id = ?').get(messageId) as ItemRow | undefined;
+  return row ? rowToItem(row) : null;
+}
+
+export function addRunItems(db: Db, runId: number, messageIds: string[]): void {
+  if (messageIds.length === 0) return;
+
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO run_items (run_id, message_id) VALUES (?, ?)',
+  );
+  const insertMany = db.transaction((ids: string[]) => {
+    for (const messageId of ids) {
+      insert.run(runId, messageId);
+    }
+  });
+
+  insertMany(messageIds);
+}
+
+function rowToRunSummary(row: RunSummaryRow): RunSummary {
+  return {
+    id: row.id,
+    ranAt: row.ran_at,
+    newItems: row.new_items,
+    itemCount: row.item_count,
+  };
+}
+
+export function getRunSummaries(db: Db): RunSummary[] {
+  const rows = db
+    .prepare(
+      `SELECT r.id, r.ran_at, r.new_items, COUNT(ri.message_id) AS item_count
+       FROM runs r
+       JOIN run_items ri ON ri.run_id = r.id
+       GROUP BY r.id
+       HAVING item_count > 0
+       ORDER BY r.ran_at DESC, r.id DESC`,
+    )
+    .all() as RunSummaryRow[];
+  return rows.map(rowToRunSummary);
+}
+
+export function getLatestNonEmptyRun(db: Db): RunSummary | null {
+  const row = db
+    .prepare(
+      `SELECT r.id, r.ran_at, r.new_items, COUNT(ri.message_id) AS item_count
+       FROM runs r
+       JOIN run_items ri ON ri.run_id = r.id
+       GROUP BY r.id
+       HAVING item_count > 0
+       ORDER BY r.ran_at DESC, r.id DESC
+       LIMIT 1`,
+    )
+    .get() as RunSummaryRow | undefined;
+  return row ? rowToRunSummary(row) : null;
+}
+
+export function getItemsByRunId(db: Db, runId: number): DigestItem[] {
+  const rows = db
+    .prepare(
+      `SELECT i.*
+       FROM run_items ri
+       JOIN items i ON i.message_id = ri.message_id
+       WHERE ri.run_id = ?
+       ORDER BY datetime(i.date) DESC, i.uid DESC`,
+    )
+    .all(runId) as ItemRow[];
   return rows.map(rowToItem);
 }

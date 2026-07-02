@@ -1,4 +1,4 @@
-import type { DigestItem, DigestMeta, HackerNewsStory, WeatherSummary } from './types.js';
+import type { DigestItem, DigestMeta, HackerNewsStory, RunSummary, WeatherSummary } from './types.js';
 
 /**
  * Escapes HTML special characters to prevent injection from untrusted input
@@ -47,6 +47,15 @@ function formatDay(iso: string): string {
   } catch {
     return escapeHtml(iso);
   }
+}
+
+function renderNotice(meta: DigestMeta): string {
+  const notice = 'notice' in meta ? (meta as DigestMeta & { notice?: string }).notice : undefined;
+  const error = 'error' in meta ? (meta as DigestMeta & { error?: string }).error : undefined;
+
+  if (error) return `<div class="notice error">${escapeHtml(error)}</div>`;
+  if (notice) return `<div class="notice">${escapeHtml(notice)}</div>`;
+  return '';
 }
 
 /**
@@ -148,6 +157,10 @@ ${sorted.map(item => {
           ? `<a class="subject-link" href="${escapeHtml(articleLink)}" target="_blank" rel="noopener">${escapeHtml(item.subject)}</a>`
           : escapeHtml(item.subject);
 
+        const chatButton = item.messageId
+          ? `<button type="button" class="chat-button" data-message-id="${escapeHtml(item.messageId)}" data-subject="${escapeHtml(item.subject)}">Chat</button>`
+          : '';
+
         return `
       <article class="card">
         <h3 class="subject">${subjectHtml}</h3>
@@ -157,6 +170,7 @@ ${sorted.map(item => {
           <span class="date">${escapeHtml(formatDate(item.date))}</span>${sourceLink}
         </div>
         ${summary}
+        <div class="item-actions">${chatButton}</div>
       </article>`;
       }).join('\n')}
     </div>`;
@@ -233,6 +247,51 @@ ${sorted.map(item => {
   .masthead .meta .count {
     color: var(--ink);
     font-weight: 600;
+  }
+
+  .top-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 22px;
+  }
+  .top-nav a,
+  .top-nav button,
+  .chat-button {
+    appearance: none;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--ink);
+    cursor: pointer;
+    font: 700 13px/1 var(--sans);
+    min-height: 36px;
+    padding: 0 13px;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .top-nav a:hover,
+  .top-nav button:hover,
+  .chat-button:hover {
+    border-color: var(--link);
+    color: var(--link);
+  }
+  .top-nav form { margin: 0; }
+  .notice {
+    margin-top: 18px;
+    padding: 12px 14px;
+    background: #eef6f1;
+    border: 1px solid #b8d8c8;
+    border-radius: 8px;
+    color: #24483b;
+    font-size: 14px;
+  }
+  .notice.error {
+    background: #fff1f0;
+    border-color: #e6b8b2;
+    color: #7f1d1d;
   }
 
   /* ---------- WEATHER ---------- */
@@ -365,6 +424,11 @@ ${sorted.map(item => {
     color: var(--muted);
     font-style: italic;
   }
+  .item-actions {
+    margin-top: 18px;
+    display: flex;
+    justify-content: flex-end;
+  }
 
   /* ---------- EMPTY LIST ---------- */
   .empty-list {
@@ -459,6 +523,115 @@ ${sorted.map(item => {
     letter-spacing: 0.03em;
   }
 
+  /* ---------- CHAT ---------- */
+  .chat-panel[hidden] { display: none; }
+  .chat-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    background: rgba(27, 26, 23, .42);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 18px;
+  }
+  .chat-box {
+    width: min(720px, 100%);
+    max-height: min(760px, calc(100vh - 36px));
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    box-shadow: 0 24px 80px rgba(27,26,23,.22);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .chat-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .chat-title {
+    font-weight: 700;
+    font-size: 15px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .chat-close {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 24px;
+    line-height: 1;
+    padding: 2px 4px;
+  }
+  .chat-log {
+    flex: 1;
+    min-height: 220px;
+    overflow: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .chat-message {
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 15px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+  }
+  .chat-message.user {
+    align-self: flex-end;
+    max-width: 82%;
+    background: #edf3ff;
+    color: #19304f;
+  }
+  .chat-message.assistant {
+    align-self: flex-start;
+    max-width: 88%;
+    background: var(--bg);
+    color: var(--ink-soft);
+  }
+  .chat-message.error {
+    align-self: stretch;
+    background: #fff1f0;
+    color: #7f1d1d;
+  }
+  .chat-form {
+    display: flex;
+    gap: 10px;
+    border-top: 1px solid var(--line);
+    padding: 12px;
+  }
+  .chat-form textarea {
+    flex: 1;
+    resize: vertical;
+    min-height: 48px;
+    max-height: 140px;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font: 15px/1.4 var(--sans);
+  }
+  .chat-form button {
+    appearance: none;
+    border: 1px solid var(--link);
+    border-radius: 8px;
+    background: var(--link);
+    color: #fff;
+    cursor: pointer;
+    font: 700 14px/1 var(--sans);
+    padding: 0 16px;
+  }
+
   /* ---------- MOBILE ---------- */
   @media (max-width: 540px) {
     body { font-size: 16px; }
@@ -469,6 +642,8 @@ ${sorted.map(item => {
     ol.hn-list li { padding: 14px 16px; gap: 12px; }
     .weather { padding: 12px 14px; }
     .weather .w-sep { display: none; }
+    .chat-form { flex-direction: column; }
+    .chat-form button { min-height: 42px; }
   }
 </style>
 </head>
@@ -478,6 +653,12 @@ ${sorted.map(item => {
   <header class="masthead">
     <h1>Newsletter Digest</h1>
     <div class="meta">Wygenerowano: ${escapeHtml(ranAtFormatted)} &nbsp;—&nbsp; Nowych: <span class="count">${escapeHtml(String(meta.newCount))}</span></div>${renderWeather(meta.weather)}
+    <nav class="top-nav" aria-label="Nawigacja">
+      <a href="/">Najnowszy</a>
+      <a href="/runs">Historia</a>
+      <form method="post" action="/refresh"><button type="submit">Pobierz nowe</button></form>
+    </nav>
+    ${renderNotice(meta)}
   </header>
 
   <main>
@@ -492,6 +673,206 @@ ${renderHackerNews(meta.hackernews)}
     Newsletter Digest · wygenerowano lokalnie · ${escapeHtml(formatDay(meta.ranAt))}
   </footer>
 
+</div>
+<section class="chat-panel" id="chat-panel" hidden>
+  <div class="chat-box" role="dialog" aria-modal="true" aria-labelledby="chat-title">
+    <div class="chat-head">
+      <div class="chat-title" id="chat-title">Chat</div>
+      <button type="button" class="chat-close" aria-label="Zamknij">&times;</button>
+    </div>
+    <div class="chat-log" id="chat-log"></div>
+    <form class="chat-form" id="chat-form">
+      <textarea id="chat-question" name="question" required placeholder="Zapytaj o ten newsletter"></textarea>
+      <button type="submit">Wyślij</button>
+    </form>
+  </div>
+</section>
+<script>
+(() => {
+  const panel = document.getElementById('chat-panel');
+  const title = document.getElementById('chat-title');
+  const log = document.getElementById('chat-log');
+  const form = document.getElementById('chat-form');
+  const question = document.getElementById('chat-question');
+  const close = document.querySelector('.chat-close');
+  let messageId = null;
+  let history = [];
+
+  function addMessage(role, content) {
+    const el = document.createElement('div');
+    el.className = 'chat-message ' + role;
+    el.textContent = content;
+    log.appendChild(el);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  document.querySelectorAll('.chat-button').forEach((button) => {
+    button.addEventListener('click', () => {
+      messageId = button.dataset.messageId;
+      history = [];
+      log.textContent = '';
+      title.textContent = button.dataset.subject || 'Chat';
+      panel.hidden = false;
+      question.focus();
+    });
+  });
+
+  close.addEventListener('click', () => {
+    panel.hidden = true;
+  });
+
+  panel.addEventListener('click', (event) => {
+    if (event.target === panel) panel.hidden = true;
+  });
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const text = question.value.trim();
+    if (!text || !messageId) return;
+
+    question.value = '';
+    addMessage('user', text);
+
+    try {
+      const response = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ messageId, question: text, history }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Chat nie odpowiedział.');
+      addMessage('assistant', data.answer);
+      history.push({ role: 'user', content: text }, { role: 'assistant', content: data.answer });
+    } catch (err) {
+      addMessage('error', err instanceof Error ? err.message : String(err));
+    }
+  });
+})();
+</script>
+</body>
+</html>`;
+}
+
+export function renderDigestPage(items: DigestItem[], meta: DigestMeta): string {
+  return renderHtml(items, meta);
+}
+
+export function renderRunsPage(runs: RunSummary[], meta: { ranAt: string; notice?: string; error?: string } = { ranAt: new Date().toISOString() }): string {
+  const rows = runs.length === 0
+    ? '<div class="empty-list">Brak zapisanych digestów.</div>'
+    : `<ol class="runs-list">
+${runs.map((run) => `
+      <li>
+        <a href="/runs/${escapeHtml(String(run.id))}">Digest #${escapeHtml(String(run.id))}</a>
+        <span>${escapeHtml(formatDate(run.ranAt))}</span>
+        <strong>${escapeHtml(String(run.itemCount))} newsletterów</strong>
+      </li>`).join('\n')}
+    </ol>`;
+
+  return `<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Historia digestów</title>
+<style>
+  :root {
+    --bg: #f7f5f0;
+    --surface: #ffffff;
+    --ink: #1b1a17;
+    --muted: #8a8478;
+    --line: #e4e0d6;
+    --line-strong: #d3cebf;
+    --link: #2f5d50;
+    --serif: Georgia, "Times New Roman", "Noto Serif", serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.6;
+    font-size: 17px;
+  }
+  .page { max-width: 720px; margin: 0 auto; padding: 0 20px 72px; }
+  header { padding: 56px 0 28px; border-bottom: 2px solid var(--ink); margin-bottom: 28px; }
+  h1 { font-family: var(--serif); font-size: clamp(34px, 8vw, 48px); line-height: 1.05; margin: 0; }
+  nav { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+  nav a, nav button {
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--ink);
+    cursor: pointer;
+    font: 700 13px/1 var(--sans);
+    min-height: 36px;
+    padding: 0 13px;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+  }
+  nav form { margin: 0; }
+  .notice {
+    margin-top: 18px;
+    padding: 12px 14px;
+    background: #eef6f1;
+    border: 1px solid #b8d8c8;
+    border-radius: 8px;
+    color: #24483b;
+    font-size: 14px;
+  }
+  .notice.error { background: #fff1f0; border-color: #e6b8b2; color: #7f1d1d; }
+  .runs-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .runs-list li {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 14px;
+    align-items: center;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .runs-list li:last-child { border-bottom: 0; }
+  .runs-list a { color: var(--link); font-weight: 700; text-decoration: none; }
+  .runs-list span { color: var(--muted); font-size: 14px; }
+  .runs-list strong { font-size: 14px; }
+  .empty-list {
+    text-align: center;
+    padding: 56px 20px;
+    color: var(--muted);
+    font-family: var(--serif);
+    font-size: 19px;
+    font-style: italic;
+    background: var(--surface);
+    border: 1px dashed var(--line-strong);
+    border-radius: 8px;
+  }
+  @media (max-width: 640px) {
+    .runs-list li { grid-template-columns: 1fr; gap: 4px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>Historia digestów</h1>
+    <nav aria-label="Nawigacja">
+      <a href="/">Najnowszy</a>
+      <form method="post" action="/refresh"><button type="submit">Pobierz nowe</button></form>
+    </nav>
+    ${meta.error ? `<div class="notice error">${escapeHtml(meta.error)}</div>` : ''}
+    ${meta.notice ? `<div class="notice">${escapeHtml(meta.notice)}</div>` : ''}
+  </header>
+  <main>${rows}</main>
 </div>
 </body>
 </html>`;

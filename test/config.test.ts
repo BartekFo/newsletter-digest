@@ -26,7 +26,7 @@ test('returns config with defaults when only required vars are set', () => {
   assert.equal(cfg.gmailAppPassword, 'secret');
   assert.equal(cfg.imapFolder, 'Newsletters');
   assert.equal(cfg.bootstrapDays, 7);
-  assert.equal(cfg.ollamaModel, 'qwen3.6:35b-a3b');
+  assert.equal(cfg.ollamaModel, 'gemma4:12b');
   assert.equal(cfg.dbPath, './digest.db');
   assert.equal(cfg.outPath, './digest.html');
 });

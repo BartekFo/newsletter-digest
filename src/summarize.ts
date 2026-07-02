@@ -19,10 +19,10 @@ export function buildPrompt(text: string): string {
  * Summarize newsletter text using a local Ollama model.
  * Returns a 2–3 sentence Polish summary.
  * @param {string} text
- * @param {string} [model='qwen3.6:35b-a3b']
+ * @param {string} [model='gemma4:12b']
  * @returns {Promise<string>}
  */
-export async function summarize(text: string, model = 'qwen3.6:35b-a3b'): Promise<string> {
+export async function summarize(text: string, model = 'gemma4:12b'): Promise<string> {
   const prompt = buildPrompt(text);
 
   const response = await ollama.chat({

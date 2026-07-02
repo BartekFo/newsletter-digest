@@ -2,7 +2,7 @@
 import { describe, it, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { openDb, initSchema, getLastUid, getItemsByUids, isKnown } from '../src/store.js';
+import { openDb, initSchema, getLastUid, getItemsByRunId, getItemsByUids, isKnown } from '../src/store.js';
 import { renderHtml } from '../src/render.js';
 import { runDigest } from '../src/digest.js';
 
@@ -126,7 +126,7 @@ describe('runDigest', () => {
     const deps = makeDeps(db);
     const result = await runDigest(deps);
 
-    assert.deepEqual(result, { fetched: 2, newItems: 2 });
+    assert.deepEqual(result, { fetched: 2, newItems: 2, runId: 1 });
   });
 
   it('inserts both items in db with summaries set (commit-per-mail)', async () => {
@@ -176,7 +176,7 @@ describe('runDigest', () => {
     });
 
     const result = await runDigest(deps);
-    assert.deepEqual(result, { fetched: 2, newItems: 2 });
+    assert.deepEqual(result, { fetched: 2, newItems: 2, runId: 1 });
 
     const html = deps._getHtml();
     assert.ok(html.includes('<!DOCTYPE html>'), 'still a valid HTML doc');
@@ -189,7 +189,7 @@ describe('runDigest', () => {
     });
 
     const result = await runDigest(deps);
-    assert.deepEqual(result, { fetched: 2, newItems: 2 });
+    assert.deepEqual(result, { fetched: 2, newItems: 2, runId: 1 });
   });
 
   it('advances the UID cursor to the max uid after success', async () => {
@@ -203,10 +203,19 @@ describe('runDigest', () => {
     const deps = makeDeps(db);
     await runDigest(deps);
 
-    const row = db.prepare('SELECT * FROM runs ORDER BY id DESC LIMIT 1').get();
-    assert.equal(row.ok, 1);
-    assert.equal(row.fetched, 2);
-    assert.equal(row.new_items, 2);
+      const row = db.prepare('SELECT * FROM runs ORDER BY id DESC LIMIT 1').get();
+      assert.equal(row.ok, 1);
+      assert.equal(row.fetched, 2);
+      assert.equal(row.new_items, 2);
+    });
+
+  it('records run_items for the new snapshot', async () => {
+    const deps = makeDeps(db);
+    const result = await runDigest(deps);
+
+    const items = getItemsByRunId(db, result.runId);
+    assert.equal(items.length, 2);
+    assert.deepEqual(items.map((item) => item.messageId).sort(), ['msg-001@test', 'msg-002@test']);
   });
 
   it('openFile is called after success', async () => {
@@ -226,11 +235,14 @@ describe('runDigest', () => {
       // Second run — same fake fetch returns the same 2 messages
       const result2 = await runDigest(deps);
 
-      assert.deepEqual(result2, { fetched: 2, newItems: 0 });
+      assert.deepEqual(result2, { fetched: 2, newItems: 0, runId: null });
 
       // Still exactly 2 rows in items table
       const count = db.prepare('SELECT COUNT(*) AS c FROM items').get().c;
       assert.equal(count, 2);
+
+      const snapshotItems = getItemsByRunId(db, 2);
+      assert.deepEqual(snapshotItems, []);
     });
   });
 
@@ -251,7 +263,7 @@ describe('runDigest', () => {
       const deps = makeDeps(db, { summarize: failingSummarize });
 
       const result = await runDigest(deps);
-      assert.deepEqual(result, { fetched: 2, newItems: 2 });
+      assert.deepEqual(result, { fetched: 2, newItems: 2, runId: 1 });
 
       const row = db.prepare('SELECT * FROM runs ORDER BY id DESC LIMIT 1').get();
       assert.equal(row.ok, 1);

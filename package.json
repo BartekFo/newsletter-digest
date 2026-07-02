@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc",
     "postbuild": "mkdir -p dist/test/fixtures && cp -R test/fixtures/. dist/test/fixtures",
-    "start": "node dist/src/digest.js",
+    "start": "node dist/src/server.js",
+    "digest:export": "node dist/src/digest.js",
     "test": "npm run build && node --test \"dist/test/*.test.js\""
   },
   "engines": {

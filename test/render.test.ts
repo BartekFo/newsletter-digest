@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderHtml } from '../src/render.js';
+import { renderHtml, renderRunsPage } from '../src/render.js';
 
 const ITEM_A = {
   messageId: '<a@test>',
@@ -132,6 +132,20 @@ test('item with null messageId renders no href, no throw', () => {
   assert.ok(!html.includes('rfc822msgid:'), 'href rendered despite null messageId');
 });
 
+test('item with messageId renders a Chat button with data-message-id', () => {
+  const html = renderHtml([ITEM_A], META);
+
+  assert.ok(html.includes('class="chat-button"'), 'chat button missing');
+  assert.ok(html.includes('data-message-id="&lt;a@test&gt;"'), 'message id data attribute missing');
+});
+
+test('render does not include cleanText body', () => {
+  const html = renderHtml([ITEM_A, ITEM_B], META);
+
+  assert.ok(!html.includes('Body A'), 'cleanText for item A leaked into HTML');
+  assert.ok(!html.includes('Body B'), 'cleanText for item B leaked into HTML');
+});
+
 test('item with empty string messageId renders no href, no throw', () => {
   const emptyId = { ...ITEM_A, messageId: '' };
   let html;
@@ -224,4 +238,20 @@ test('hackernews: malicious title is escaped', () => {
 
   assert.ok(!html.includes('<script>alert(1)</script>'), 'raw script in HN title not escaped');
   assert.ok(html.includes('&lt;script&gt;'), 'escaped script not found');
+});
+
+test('runs page renders links to run snapshots', () => {
+  const html = renderRunsPage([
+    { id: 7, ranAt: '2024-03-01T08:00:00.000Z', newItems: 2, itemCount: 2 },
+  ]);
+
+  assert.ok(html.includes('href="/runs/7"'), 'run link missing');
+  assert.ok(html.includes('Digest #7'), 'run label missing');
+});
+
+test('runs page empty state does not crash', () => {
+  const html = renderRunsPage([]);
+
+  assert.ok(html.includes('<!DOCTYPE html>'), 'not a valid HTML doc');
+  assert.ok(html.includes('Brak zapisanych digestów'), 'empty state missing');
 });
