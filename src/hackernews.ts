@@ -1,4 +1,5 @@
 import { silentLogger } from './logger.js';
+import type { AppLogger, HackerNewsStory } from './types.js';
 
 const TOP_STORIES_URL = 'https://hacker-news.firebaseio.com/v0/topstories.json';
 const ITEM_URL = 'https://hacker-news.firebaseio.com/v0/item';
@@ -9,13 +10,24 @@ const TIMEOUT_MS = 5000;
  * @param {number} id
  * @returns {Promise<{title: string, url: string, score: number, comments: number, hnUrl: string} | null>}
  */
-async function fetchStory(id) {
+interface HackerNewsItem {
+  title?: string;
+  url?: string;
+  score?: number;
+  descendants?: number;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+async function fetchStory(id: number): Promise<HackerNewsStory | null> {
   const res = await fetch(`${ITEM_URL}/${id}.json`, {
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`Item ${id} failed: HTTP ${res.status}`);
 
-  const item = await res.json();
+  const item = (await res.json()) as HackerNewsItem | null;
   if (!item || !item.title) return null;
 
   const hnUrl = `https://news.ycombinator.com/item?id=${id}`;
@@ -37,20 +49,23 @@ async function fetchStory(id) {
  * @param {import('pino').Logger} [logger=silentLogger]
  * @returns {Promise<Array<{title: string, url: string, score: number, comments: number, hnUrl: string}> | null>}
  */
-export async function fetchTopStories(n = 6, logger = silentLogger) {
+export async function fetchTopStories(
+  n = 6,
+  logger: AppLogger = silentLogger,
+): Promise<HackerNewsStory[] | null> {
   try {
     const res = await fetch(TOP_STORIES_URL, {
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`Top stories failed: HTTP ${res.status}`);
 
-    const ids = await res.json();
+    const ids = (await res.json()) as number[];
     const topIds = ids.slice(0, n);
 
     const stories = await Promise.all(topIds.map(fetchStory));
-    return stories.filter(Boolean);
+    return stories.filter((story): story is HackerNewsStory => story !== null);
   } catch (err) {
-    logger.warn({ err: err.message }, 'HackerNews niedostępny');
+    logger.warn({ err: errorMessage(err) }, 'HackerNews niedostępny');
     return null;
   }
 }

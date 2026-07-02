@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderHtml } from '../src/render.js';
@@ -94,6 +95,15 @@ test('item with messageId renders a Gmail deep-link containing rfc822msgid', () 
   // ITEM_A.messageId is '<a@test>' — encodeURIComponent encodes < > @ so check encoded form
   assert.ok(html.includes(encodeURIComponent('<a@test>')), 'encoded messageId not in href');
   assert.ok(html.includes('mail.google.com'), 'Gmail domain missing');
+});
+
+test('Gmail deep-link targets configured newsletter account when present', () => {
+  const html = renderHtml([ITEM_A], { ...META, gmailUser: 'newsletters@example.com' });
+
+  assert.ok(
+    html.includes('/mail/u/newsletters%40example.com/#search/'),
+    'Gmail link should include configured account',
+  );
 });
 
 test('messageId with special chars (<, &) is URL-encoded and HTML-attribute-escaped in href', () => {

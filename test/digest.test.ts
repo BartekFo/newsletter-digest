@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { describe, it, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -44,6 +45,11 @@ test('parseMail: result has all required keys', async () => {
   assert.ok('link' in result);
 });
 
+test('parseMail: extracts web-version link from newsletter body', async () => {
+  const result = await parseMail(fixtureRaw);
+  assert.equal(result.link, 'https://techweekly.example.com/view?id=001');
+});
+
 test('extractLink: picks up og:url', () => {
   const html = '<html><head><meta property="og:url" content="https://blog.example.com/post-1"></head><body>hi</body></html>';
   assert.equal(extractLink(html), 'https://blog.example.com/post-1');
@@ -64,6 +70,42 @@ test('extractLink: og:url wins over canonical', () => {
     '<meta property="og:url" content="https://blog.example.com/og">' +
     '<link rel="canonical" href="https://blog.example.com/canon">';
   assert.equal(extractLink(html), 'https://blog.example.com/og');
+});
+
+test('extractLink: falls back to view-in-browser body link', () => {
+  const html = `
+    <a href="https://newsletter.example.com">Home</a>
+    <a href="https://newsletter.example.com/archive">Archive</a>
+    <a href="https://newsletter.example.com/view?id=42">View in browser</a>
+  `;
+  assert.equal(extractLink(html), 'https://newsletter.example.com/view?id=42');
+});
+
+test('extractLink: prioritizes Substack read-in-app body link', () => {
+  const html = `
+    <a href="https://example.substack.com">Home</a>
+    <a href="https://example.substack.com/archive">Archive</a>
+    <a href="https://example.substack.com/p/the-post?utm_source=substack&utm_medium=email">Read in app</a>
+    <a href="https://example.substack.com/account">Manage subscription</a>
+  `;
+  assert.equal(
+    extractLink(html),
+    'https://example.substack.com/p/the-post?utm_source=substack&utm_medium=email',
+  );
+});
+
+test('extractLink: falls back to first non-boilerplate body link', () => {
+  const html = `
+    <a href="https://newsletter.example.com">Home</a>
+    <a href="https://newsletter.example.com/preferences">Manage preferences</a>
+    <a href="https://blog.example.com/post-3">Read the article</a>
+  `;
+  assert.equal(extractLink(html), 'https://blog.example.com/post-3');
+});
+
+test('extractLink: decodes escaped href attributes', () => {
+  const html = '<a href="https://newsletter.example.com/view?id=42&amp;token=abc">Read online</a>';
+  assert.equal(extractLink(html), 'https://newsletter.example.com/view?id=42&token=abc');
 });
 
 test('extractLink: rejects non-http schemes', () => {

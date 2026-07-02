@@ -1,4 +1,5 @@
 import { ImapFlow } from 'imapflow';
+import type { AppConfig, FetchedMessage } from './types.js';
 
 /**
  * Determine what to fetch based on the last-seen UID.
@@ -8,7 +9,34 @@ import { ImapFlow } from 'imapflow';
  * @param {Date} [now=new Date()] - injectable clock for deterministic tests
  * @returns {{ mode: 'since', since: Date } | { mode: 'uid', range: string }}
  */
-export function buildFetchCriteria(lastUid, bootstrapDays, now = new Date()) {
+export type FetchCriteria =
+  | { mode: 'since'; since: Date }
+  | { mode: 'uid'; range: string };
+
+interface ImapLike {
+  connect(): Promise<void>;
+  mailboxOpen(path: string): Promise<unknown>;
+  search(query: object, options: object): Promise<number[]>;
+  fetch(
+    range: string,
+    query: object,
+    options: object,
+  ): AsyncIterable<{ source: Buffer; uid: number }>;
+  logout(): Promise<void>;
+}
+
+interface ImapError {
+  responseStatus?: string;
+  code?: string;
+  responseText?: string;
+  message?: string;
+}
+
+export function buildFetchCriteria(
+  lastUid: number | null,
+  bootstrapDays: number,
+  now = new Date(),
+): FetchCriteria {
   if (lastUid == null) {
     const since = new Date(now.getTime() - bootstrapDays * 24 * 3600 * 1000);
     return { mode: 'since', since };
@@ -20,9 +48,10 @@ export function buildFetchCriteria(lastUid, bootstrapDays, now = new Date()) {
  * True when the error is Gmail's "no matching messages" response for an
  * out-of-range UID set, rather than a genuine failure.
  */
-function isNoMatchingMessagesError(err) {
-  const code = err?.responseStatus ?? err?.code ?? '';
-  const text = `${err?.responseText ?? err?.message ?? ''}`.toUpperCase();
+function isNoMatchingMessagesError(err: unknown): boolean {
+  const imapErr = err as ImapError;
+  const code = imapErr.responseStatus ?? imapErr.code ?? '';
+  const text = `${imapErr.responseText ?? imapErr.message ?? ''}`.toUpperCase();
   return code === 'NO' || text.includes('NONEXISTENT');
 }
 
@@ -34,10 +63,14 @@ function isNoMatchingMessagesError(err) {
  * @param {object} [client] - injectable ImapFlow-compatible client (for tests)
  * @returns {Promise<{ raw: Buffer, uid: number }[]>}
  */
-export async function fetchNewMessages(config, lastUid, client) {
+export async function fetchNewMessages(
+  config: Pick<AppConfig, 'gmailUser' | 'gmailAppPassword' | 'imapFolder' | 'bootstrapDays'>,
+  lastUid: number | null,
+  client?: ImapLike,
+): Promise<FetchedMessage[]> {
   const imap =
     client ??
-    new ImapFlow({
+    (new ImapFlow({
       host: 'imap.gmail.com',
       port: 993,
       secure: true,
@@ -47,9 +80,9 @@ export async function fetchNewMessages(config, lastUid, client) {
       },
       // Suppress imapflow's built-in logger to keep output clean
       logger: false,
-    });
+    }) as unknown as ImapLike);
 
-  const messages = [];
+  const messages: FetchedMessage[] = [];
 
   try {
     await imap.connect();

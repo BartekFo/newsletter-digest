@@ -1,8 +1,10 @@
+import type { DigestItem, DigestMeta, HackerNewsStory, WeatherSummary } from './types.js';
+
 /**
  * Escapes HTML special characters to prevent injection from untrusted input
  * (email headers: subject, sender).
  */
-function escapeHtml(str) {
+function escapeHtml(str: unknown): string {
   if (str == null) return '';
   return String(str)
     .replace(/&/g, '&amp;')
@@ -16,12 +18,17 @@ function escapeHtml(str) {
  * Returns the URL only if it is a safe http/https link, else null.
  * Blocks javascript:/data: schemes from reaching an href.
  */
-function safeUrl(url) {
+function safeUrl(url: unknown): string | null {
   if (!url || typeof url !== 'string') return null;
   return /^https?:\/\//i.test(url) ? url : null;
 }
 
-function formatDate(iso) {
+function gmailMessageUrl(messageId: string, gmailUser?: string): string {
+  const account = gmailUser ? encodeURIComponent(gmailUser) : '0';
+  return `https://mail.google.com/mail/u/${account}/#search/rfc822msgid:${encodeURIComponent(messageId)}`;
+}
+
+function formatDate(iso: string): string {
   try {
     return new Date(iso).toLocaleString('pl-PL', { timeZone: 'Europe/Warsaw' });
   } catch {
@@ -29,7 +36,7 @@ function formatDate(iso) {
   }
 }
 
-function formatDay(iso) {
+function formatDay(iso: string): string {
   try {
     return new Date(iso).toLocaleDateString('pl-PL', {
       timeZone: 'Europe/Warsaw',
@@ -48,7 +55,7 @@ function formatDay(iso) {
  * @param {number} code
  * @returns {string}
  */
-function weatherIcon(code) {
+function weatherIcon(code: number): string {
   if (code === 0) return '☀️';
   if (code === 1) return '🌤️';
   if (code === 2) return '⛅';
@@ -66,7 +73,7 @@ function weatherIcon(code) {
  * @param {{city: string, temp: number, code?: number, description: string, max: number, min: number, precipProb: number}|null|undefined} weather
  * @returns {string}
  */
-function renderWeather(weather) {
+function renderWeather(weather: WeatherSummary | null | undefined): string {
   if (!weather) return '';
 
   return `
@@ -86,7 +93,7 @@ function renderWeather(weather) {
  * @param {Array<{title: string, url: string, score: number, comments: number, hnUrl: string}>|null|undefined} stories
  * @returns {string}
  */
-function renderHackerNews(stories) {
+function renderHackerNews(stories: HackerNewsStory[] | null | undefined): string {
   if (!stories || stories.length === 0) return '';
 
   const list = stories.map((s, i) => `
@@ -117,8 +124,8 @@ ${list}
  * @param {{ranAt: string, newCount: number, weather?: object|null, hackernews?: object[]|null}} meta
  * @returns {string} Full HTML document
  */
-export function renderHtml(items, meta) {
-  const sorted = [...items].sort((a, b) => new Date(b.date) - new Date(a.date));
+export function renderHtml(items: DigestItem[], meta: DigestMeta): string {
+  const sorted = [...items].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   const ranAtFormatted = formatDate(meta.ranAt);
 
@@ -133,7 +140,7 @@ ${sorted.map(item => {
         const sourceLink = item.messageId
           ? `
           <span class="dot" aria-hidden="true">·</span>
-          <a class="gmail-link" href="${escapeHtml(`https://mail.google.com/mail/u/0/#search/rfc822msgid:${encodeURIComponent(item.messageId)}`)}" target="_blank" rel="noopener">Otwórz w Gmailu</a>`
+          <a class="gmail-link" href="${escapeHtml(gmailMessageUrl(item.messageId, meta.gmailUser))}" target="_blank" rel="noopener">Otwórz w Gmailu</a>`
           : '';
 
         const articleLink = safeUrl(item.link);

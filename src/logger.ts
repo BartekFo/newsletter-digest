@@ -1,5 +1,6 @@
 import pino from 'pino';
 import pretty from 'pino-pretty';
+import type { Logger } from 'pino';
 
 /**
  * Build a human-readable logger for interactive CLI runs.
@@ -11,7 +12,7 @@ import pretty from 'pino-pretty';
  * @param {string} [level='info'] - pino level; use 'silent' in tests
  * @returns {import('pino').Logger}
  */
-export function createLogger(level = process.env.LOG_LEVEL ?? 'info') {
+export function createLogger(level = process.env.LOG_LEVEL ?? 'info'): Logger {
   if (level === 'silent') {
     return pino({ level });
   }

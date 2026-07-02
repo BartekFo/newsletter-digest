@@ -1,5 +1,7 @@
 import 'dotenv/config';
 
+import type { AppConfig } from './types.js';
+
 /**
  * Build a validated config object from the given environment.
  * Throws a clear error if any required variable is missing.
@@ -9,7 +11,7 @@ import 'dotenv/config';
  *             bootstrapDays: number, ollamaModel: string, dbPath: string, outPath: string,
  *             weatherCity: string, logLevel: string }}
  */
-export function loadConfig(env = process.env) {
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (!env.GMAIL_USER) {
     throw new Error('Missing required environment variable: GMAIL_USER');
   }

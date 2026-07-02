@@ -8,7 +8,7 @@ Content-Type: multipart/alternative; boundary="----=_Part_001"
 
 ------=_Part_001
 Content-Type: text/plain; charset=utf-8
-Content-Transfer-Encoding: quoted-printable
+Content-Transfer-Encoding: 8bit
 
 Tech Weekly - June 27, 2026
 
@@ -28,7 +28,7 @@ Unsubscribe | Manage preferences | View in browser
 This email was sent to reader@example.com
 ------=_Part_001
 Content-Type: text/html; charset=utf-8
-Content-Transfer-Encoding: quoted-printable
+Content-Transfer-Encoding: 8bit
 
 <!DOCTYPE html>
 <html>

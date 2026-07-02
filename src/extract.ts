@@ -5,7 +5,7 @@ import Parser from '@postlight/parser';
  * @param {string} html
  * @returns {string}
  */
-function stripTags(html) {
+function stripTags(html: string): string {
   return html
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/g, ' ')
@@ -25,7 +25,7 @@ function stripTags(html) {
  * @param {string} html
  * @returns {Promise<string>}
  */
-export async function extractText(html) {
+export async function extractText(html: unknown): Promise<string> {
   if (!html || typeof html !== 'string' || html.trim() === '') return '';
 
   try {

@@ -22,6 +22,20 @@ import {
   recordRun,
   getItemsByUids,
 } from './store.js';
+import type {
+  AppConfig,
+  AppLogger,
+  Db,
+  DigestItem,
+  FetchedMessage,
+  HackerNewsStory,
+  ParsedMail,
+  WeatherSummary,
+} from './types.js';
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 /**
  * Open a file in the system's default application.
@@ -29,10 +43,35 @@ import {
  * @param {string} filePath
  * @returns {Promise<void>}
  */
-function openFile(filePath) {
-  return new Promise((resolve) => {
+function openFile(filePath: string): Promise<void> {
+  return new Promise<void>((resolve) => {
     execFile('open', [filePath], () => resolve());
   });
+}
+
+export interface DigestDeps {
+  db: Db;
+  config: AppConfig;
+  fetchNewMessages(config: AppConfig, lastUid: number | null): Promise<FetchedMessage[]>;
+  parseMail(raw: Buffer): Promise<ParsedMail>;
+  extractText(html: string): Promise<string>;
+  summarize(text: string, model: string): Promise<string>;
+  renderHtml(
+    items: DigestItem[],
+    meta: {
+      ranAt: string;
+      newCount: number;
+      gmailUser?: string;
+      weather: WeatherSummary | null;
+      hackernews: HackerNewsStory[] | null;
+    },
+  ): string;
+  fetchWeather(config: AppConfig, logger: AppLogger): Promise<WeatherSummary | null>;
+  fetchTopStories(n: number, logger: AppLogger): Promise<HackerNewsStory[] | null>;
+  writeFile(path: string, content: string): Promise<void>;
+  openFile(path: string): Promise<void>;
+  now(): Date;
+  logger?: AppLogger;
 }
 
 /**
@@ -56,7 +95,7 @@ function openFile(filePath) {
  *
  * @returns {Promise<{fetched: number, newItems: number}>}
  */
-export async function runDigest(deps) {
+export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; newItems: number }> {
   const {
     db,
     config,
@@ -76,7 +115,8 @@ export async function runDigest(deps) {
   const startMs = Date.now();
   const lastUid = getLastUid(db);
 
-  let fetched, newUids;
+  let fetched: FetchedMessage[] | undefined;
+  let newUids: number[] = [];
 
   try {
     logger.info({ lastUid, folder: config.imapFolder }, 'Łączę z Gmail, pobieram nowe wiadomości…');
@@ -131,7 +171,7 @@ export async function runDigest(deps) {
         // summary null (render shows "(brak streszczenia)") and keep going so the
         // item still reaches the digest and the cursor still advances past it.
         logger.error(
-          { uid, messageId: mail.messageId, err: err.message, ms: Date.now() - summaryStartMs },
+        { uid, messageId: mail.messageId, err: errorMessage(err), ms: Date.now() - summaryStartMs },
           'Streszczenie nieudane — pomijam, zostawiam placeholder',
         );
       }
@@ -158,6 +198,7 @@ export async function runDigest(deps) {
     const html = render(items, {
       ranAt: now().toISOString(),
       newCount: newUids.length,
+      gmailUser: config.gmailUser,
       weather,
       hackernews,
     });
@@ -183,7 +224,7 @@ export async function runDigest(deps) {
     return { fetched: fetched.length, newItems: newUids.length };
   } catch (err) {
     logger.error(
-      { err: err.message, durationMs: Date.now() - startMs },
+      { err: errorMessage(err), durationMs: Date.now() - startMs },
       'Bieg nieudany',
     );
     recordRun(db, {
@@ -204,11 +245,11 @@ const isMain =
 
 if (isMain) {
   (async () => {
-    let config;
+    let config: AppConfig;
     try {
       config = loadConfig();
     } catch (err) {
-      createLogger().error({ err: err.message }, 'Błąd konfiguracji');
+      createLogger().error({ err: errorMessage(err) }, 'Błąd konfiguracji');
       process.exitCode = 1;
       return;
     }
@@ -228,7 +269,7 @@ if (isMain) {
         renderHtml,
         fetchWeather,
         fetchTopStories,
-        writeFile: (path, content) => fsWriteFile(path, content, 'utf8'),
+        writeFile: (path: string, content: string) => fsWriteFile(path, content, 'utf8'),
         openFile,
         now: () => new Date(),
         logger,

@@ -1,4 +1,5 @@
 import { silentLogger } from './logger.js';
+import type { AppLogger, WeatherSummary } from './types.js';
 
 const GEOCODE_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
@@ -8,7 +9,7 @@ const TIMEOUT_MS = 5000;
  * WMO weather interpretation codes → Polish description.
  * https://open-meteo.com/en/docs (Weather variable documentation).
  */
-const WMO_CODES = {
+const WMO_CODES: Record<number, string> = {
   0: 'Bezchmurnie',
   1: 'Przeważnie bezchmurnie',
   2: 'Częściowe zachmurzenie',
@@ -44,7 +45,7 @@ const WMO_CODES = {
  * @param {number} code
  * @returns {string}
  */
-export function weatherCodeToText(code) {
+export function weatherCodeToText(code: number): string {
   return WMO_CODES[code] ?? 'Nieznane warunki';
 }
 
@@ -53,12 +54,32 @@ export function weatherCodeToText(code) {
  * @param {string} city
  * @returns {Promise<{lat: number, lon: number, name: string}>}
  */
-export async function geocodeCity(city) {
+interface GeocodeResponse {
+  results?: Array<{ latitude: number; longitude: number; name: string }>;
+}
+
+interface ForecastResponse {
+  current?: {
+    temperature_2m?: number;
+    weather_code?: number;
+  };
+  daily?: {
+    temperature_2m_max?: number[];
+    temperature_2m_min?: number[];
+    precipitation_probability_max?: number[];
+  };
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+export async function geocodeCity(city: string): Promise<{ lat: number; lon: number; name: string }> {
   const url = `${GEOCODE_URL}?name=${encodeURIComponent(city)}&count=1&language=pl&format=json`;
   const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
   if (!res.ok) throw new Error(`Geocoding failed: HTTP ${res.status}`);
 
-  const data = await res.json();
+  const data = (await res.json()) as GeocodeResponse;
   const hit = data.results?.[0];
   if (!hit) throw new Error(`City not found: ${city}`);
 
@@ -75,7 +96,10 @@ export async function geocodeCity(city) {
  * @returns {Promise<{city: string, temp: number, code: number, description: string,
  *   max: number, min: number, precipProb: number} | null>}
  */
-export async function fetchWeather(config, logger = silentLogger) {
+export async function fetchWeather(
+  config: { weatherCity: string },
+  logger: AppLogger = silentLogger,
+): Promise<WeatherSummary | null> {
   try {
     const { lat, lon, name } = await geocodeCity(config.weatherCity);
 
@@ -92,20 +116,20 @@ export async function fetchWeather(config, logger = silentLogger) {
     });
     if (!res.ok) throw new Error(`Forecast failed: HTTP ${res.status}`);
 
-    const data = await res.json();
-    const code = data.current?.weather_code;
+    const data = (await res.json()) as ForecastResponse;
+    const code = data.current?.weather_code as number;
 
     return {
       city: name,
-      temp: Math.round(data.current?.temperature_2m),
+      temp: Math.round(data.current?.temperature_2m as number),
       code,
       description: weatherCodeToText(code),
-      max: Math.round(data.daily?.temperature_2m_max?.[0]),
-      min: Math.round(data.daily?.temperature_2m_min?.[0]),
+      max: Math.round(data.daily?.temperature_2m_max?.[0] as number),
+      min: Math.round(data.daily?.temperature_2m_min?.[0] as number),
       precipProb: data.daily?.precipitation_probability_max?.[0] ?? 0,
     };
   } catch (err) {
-    logger.warn({ err: err.message, city: config.weatherCity }, 'Pogoda niedostępna');
+    logger.warn({ err: errorMessage(err), city: config.weatherCity }, 'Pogoda niedostępna');
     return null;
   }
 }

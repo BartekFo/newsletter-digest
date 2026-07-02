@@ -10,7 +10,7 @@ export const INSTRUCTION =
  * @param {string} text
  * @returns {string}
  */
-export function buildPrompt(text) {
+export function buildPrompt(text: string): string {
   const truncated = text.slice(0, MAX_CHARS);
   return INSTRUCTION + truncated;
 }
@@ -22,13 +22,13 @@ export function buildPrompt(text) {
  * @param {string} [model='qwen3.6:35b-a3b']
  * @returns {Promise<string>}
  */
-export async function summarize(text, model = 'qwen3.6:35b-a3b') {
+export async function summarize(text: string, model = 'qwen3.6:35b-a3b'): Promise<string> {
   const prompt = buildPrompt(text);
 
   const response = await ollama.chat({
     model,
     messages: [{ role: 'user', content: prompt }],
-    options: { think: false },
+    options: { think: false } as Record<string, unknown>,
   });
 
   return response.message.content.trim();
