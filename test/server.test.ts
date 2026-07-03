@@ -87,6 +87,42 @@ test('GET / renders latest non-empty run', async () => {
   });
 });
 
+test('GET / renders saved weather and HackerNews for latest run', async () => {
+  await withServer({}, async ({ db, baseUrl }) => {
+    insertItem(db, ITEM);
+    const runId = recordRun(db, {
+      fetched: 1,
+      newItems: 1,
+      durationMs: 10,
+      ok: true,
+      weather: {
+        city: 'Testowo',
+        temp: 12,
+        code: 3,
+        description: 'Pochmurno',
+        max: 15,
+        min: 7,
+        precipProb: 40,
+      },
+      hackernews: [{
+        title: 'Saved HN Story',
+        url: 'https://example.com/story',
+        score: 123,
+        comments: 45,
+        hnUrl: 'https://news.ycombinator.com/item?id=1',
+      }],
+    });
+    addRunItems(db, runId, [ITEM.messageId]);
+
+    const response = await fetch(`${baseUrl}/`);
+    const html = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.ok(html.includes('Testowo'));
+    assert.ok(html.includes('Saved HN Story'));
+  });
+});
+
 test('POST /chat without messageId returns 400', async () => {
   await withServer({}, async ({ baseUrl }) => {
     const response = await fetch(`${baseUrl}/chat`, {

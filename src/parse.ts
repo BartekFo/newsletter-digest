@@ -1,4 +1,5 @@
 import { simpleParser } from 'mailparser';
+import { normalizeArticleUrl } from './link.js';
 import type { ParsedMail } from './types.js';
 
 const JUNK_LINK_PATTERNS = [
@@ -85,22 +86,22 @@ export function extractLink(html: unknown): string | null {
   const og =
     html.match(/<meta[^>]+property=["']og:url["'][^>]*content=["']([^"']+)["']/i) ||
     html.match(/<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:url["']/i);
-  if (og?.[1] && /^https?:\/\//i.test(og[1])) return og[1];
+  if (og?.[1] && /^https?:\/\//i.test(og[1])) return normalizeArticleUrl(og[1]);
 
   const canonical =
     html.match(/<link[^>]+rel=["']canonical["'][^>]*href=["']([^"']+)["']/i) ||
     html.match(/<link[^>]+href=["']([^"']+)["'][^>]*rel=["']canonical["']/i);
-  if (canonical?.[1] && /^https?:\/\//i.test(canonical[1])) return canonical[1];
+  if (canonical?.[1] && /^https?:\/\//i.test(canonical[1])) return normalizeArticleUrl(canonical[1]);
 
   const anchors = extractAnchorLinks(html);
   const webVersion = anchors.find(({ text }) =>
     /\b(view|read|open)\b.*\b(browser|web|online|app)\b/i.test(text) ||
     /\b(browser|web|online|app)\b.*\bversion\b/i.test(text),
   );
-  if (webVersion) return webVersion.href;
+  if (webVersion) return normalizeArticleUrl(webVersion.href);
 
   const articleLink = anchors.find(({ href, text }) => !isJunkLink(href, text));
-  if (articleLink) return articleLink.href;
+  if (articleLink) return normalizeArticleUrl(articleLink.href);
 
   return null;
 }

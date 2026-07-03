@@ -125,6 +125,8 @@ function renderRun(db: Db, run: RunSummary, config: AppConfig, extras: { notice?
     newCount: run.newItems,
     runId: run.id,
     gmailUser: config.gmailUser,
+    ...(run.weather !== undefined ? { weather: run.weather } : {}),
+    ...(run.hackernews !== undefined ? { hackernews: run.hackernews } : {}),
     ...extras,
   });
 }

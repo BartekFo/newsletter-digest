@@ -209,6 +209,18 @@ describe('runDigest', () => {
       assert.equal(row.new_items, 2);
     });
 
+  it('records weather and HackerNews with the run snapshot', async () => {
+    const deps = makeDeps(db);
+    const result = await runDigest(deps);
+
+    const run = db.prepare('SELECT weather_json, hackernews_json FROM runs WHERE id = ?').get(result.runId);
+    const weather = JSON.parse(run.weather_json);
+    const hackernews = JSON.parse(run.hackernews_json);
+
+    assert.equal(weather.city, 'Testowo');
+    assert.equal(hackernews[0].title, 'Fake HN Story');
+  });
+
   it('records run_items for the new snapshot', async () => {
     const deps = makeDeps(db);
     const result = await runDigest(deps);

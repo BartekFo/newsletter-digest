@@ -73,6 +73,8 @@ export interface RunSummary {
   ranAt: string;
   newItems: number;
   itemCount: number;
+  weather?: WeatherSummary | null;
+  hackernews?: HackerNewsStory[] | null;
 }
 
 export type AppLogger = Logger;

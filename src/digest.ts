@@ -215,6 +215,8 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
       newItems: newUids.length,
       durationMs,
       ok: 1,
+      weather,
+      hackernews,
     });
     addRunItems(db, runId, newMessageIds);
 

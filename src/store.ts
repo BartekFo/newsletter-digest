@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import type { Db, DigestItem, RunSummary } from './types.js';
+import type { Db, DigestItem, HackerNewsStory, RunSummary, WeatherSummary } from './types.js';
 
 interface StateRow {
   value: string;
@@ -26,6 +26,8 @@ interface RunSummaryRow {
   ran_at: string;
   new_items: number;
   item_count: number;
+  weather_json: string | null;
+  hackernews_json: string | null;
 }
 
 export interface RunRecord {
@@ -33,6 +35,8 @@ export interface RunRecord {
   newItems: number;
   durationMs: number;
   ok: boolean | number;
+  weather?: WeatherSummary | null;
+  hackernews?: HackerNewsStory[] | null;
 }
 
 export function openDb(path: string): Db {
@@ -64,7 +68,9 @@ export function initSchema(db: Db): void {
       fetched     INTEGER,
       new_items   INTEGER,
       duration_ms INTEGER,
-      ok          INTEGER
+      ok          INTEGER,
+      weather_json TEXT,
+      hackernews_json TEXT
     );
 
     CREATE TABLE IF NOT EXISTS run_items (
@@ -80,6 +86,14 @@ export function initSchema(db: Db): void {
   const cols = db.prepare('PRAGMA table_info(items)').all() as TableInfoRow[];
   if (!cols.some((c) => c.name === 'link')) {
     db.exec('ALTER TABLE items ADD COLUMN link TEXT');
+  }
+
+  const runCols = db.prepare('PRAGMA table_info(runs)').all() as TableInfoRow[];
+  if (!runCols.some((c) => c.name === 'weather_json')) {
+    db.exec('ALTER TABLE runs ADD COLUMN weather_json TEXT');
+  }
+  if (!runCols.some((c) => c.name === 'hackernews_json')) {
+    db.exec('ALTER TABLE runs ADD COLUMN hackernews_json TEXT');
   }
 }
 
@@ -113,14 +127,31 @@ export function setSummary(db: Db, messageId: string, summary: string): void {
   db.prepare('UPDATE items SET summary = ? WHERE message_id = ?').run(summary, messageId);
 }
 
-export function recordRun(db: Db, { fetched, newItems, durationMs, ok }: RunRecord): number {
+export function recordRun(db: Db, { fetched, newItems, durationMs, ok, weather, hackernews }: RunRecord): number {
   const result = db
     .prepare(
-      `INSERT INTO runs (ran_at, fetched, new_items, duration_ms, ok)
-       VALUES (datetime('now'), ?, ?, ?, ?)`,
+      `INSERT INTO runs (ran_at, fetched, new_items, duration_ms, ok, weather_json, hackernews_json)
+       VALUES (datetime('now'), ?, ?, ?, ?, ?, ?)`,
     )
-    .run(fetched, newItems, durationMs, ok ? 1 : 0);
+    .run(
+      fetched,
+      newItems,
+      durationMs,
+      ok ? 1 : 0,
+      weather ? JSON.stringify(weather) : null,
+      hackernews ? JSON.stringify(hackernews) : null,
+    );
   return Number(result.lastInsertRowid);
+}
+
+function parseJson<T>(value: string | null): T | null {
+  if (!value) return null;
+
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
 }
 
 function rowToItem(row: ItemRow): DigestItem {
@@ -170,13 +201,15 @@ function rowToRunSummary(row: RunSummaryRow): RunSummary {
     ranAt: row.ran_at,
     newItems: row.new_items,
     itemCount: row.item_count,
+    weather: parseJson<WeatherSummary>(row.weather_json),
+    hackernews: parseJson<HackerNewsStory[]>(row.hackernews_json),
   };
 }
 
 export function getRunSummaries(db: Db): RunSummary[] {
   const rows = db
     .prepare(
-      `SELECT r.id, r.ran_at, r.new_items, COUNT(ri.message_id) AS item_count
+      `SELECT r.id, r.ran_at, r.new_items, r.weather_json, r.hackernews_json, COUNT(ri.message_id) AS item_count
        FROM runs r
        JOIN run_items ri ON ri.run_id = r.id
        GROUP BY r.id
@@ -190,7 +223,7 @@ export function getRunSummaries(db: Db): RunSummary[] {
 export function getLatestNonEmptyRun(db: Db): RunSummary | null {
   const row = db
     .prepare(
-      `SELECT r.id, r.ran_at, r.new_items, COUNT(ri.message_id) AS item_count
+      `SELECT r.id, r.ran_at, r.new_items, r.weather_json, r.hackernews_json, COUNT(ri.message_id) AS item_count
        FROM runs r
        JOIN run_items ri ON ri.run_id = r.id
        GROUP BY r.id

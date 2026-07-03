@@ -1,3 +1,4 @@
+import { normalizeArticleUrl } from './link.js';
 import type { DigestItem, DigestMeta, HackerNewsStory, RunSummary, WeatherSummary } from './types.js';
 
 /**
@@ -20,7 +21,7 @@ function escapeHtml(str: unknown): string {
  */
 function safeUrl(url: unknown): string | null {
   if (!url || typeof url !== 'string') return null;
-  return /^https?:\/\//i.test(url) ? url : null;
+  return /^https?:\/\//i.test(url) ? normalizeArticleUrl(url) : null;
 }
 
 function gmailMessageUrl(messageId: string, gmailUser?: string): string {

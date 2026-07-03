@@ -163,6 +163,20 @@ test('item with link renders subject as an anchor to the article', () => {
   assert.ok(html.includes('rfc822msgid:'), 'Gmail link dropped');
 });
 
+test('item with open.substack.com app-store redirect link renders normalized article href', () => {
+  const linked = {
+    ...ITEM_A,
+    link: 'https://open.substack.com/pub/pragmaticengineer/p/how-kent-beck-shapes-the-software?utm_source=email&redirect=app-store&utm_campaign=email-read-in-app',
+  };
+  const html = renderHtml([linked], META);
+
+  assert.ok(
+    html.includes('href="https://open.substack.com/pub/pragmaticengineer/p/how-kent-beck-shapes-the-software"'),
+    'normalized article href missing',
+  );
+  assert.ok(!html.includes('redirect=app-store'), 'app-store redirect leaked into href');
+});
+
 test('item without link renders plain subject (no subject anchor)', () => {
   const html = renderHtml([ITEM_A], META);
   assert.ok(!html.includes('class="subject-link"'), 'subject-link rendered despite no link');

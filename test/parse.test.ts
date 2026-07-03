@@ -94,6 +94,18 @@ test('extractLink: prioritizes Substack read-in-app body link', () => {
   );
 });
 
+test('extractLink: strips app-store redirect params from open.substack.com article links', () => {
+  const html = `
+    <a href="https://pragmaticengineer.substack.com">Home</a>
+    <a href="https://open.substack.com/pub/pragmaticengineer/p/how-kent-beck-shapes-the-software?utm_source=email&amp;redirect=app-store&amp;utm_campaign=email-read-in-app">Read in app</a>
+    <a href="https://pragmaticengineer.substack.com/account">Manage subscription</a>
+  `;
+  assert.equal(
+    extractLink(html),
+    'https://open.substack.com/pub/pragmaticengineer/p/how-kent-beck-shapes-the-software',
+  );
+});
+
 test('extractLink: falls back to first non-boilerplate body link', () => {
   const html = `
     <a href="https://newsletter.example.com">Home</a>
