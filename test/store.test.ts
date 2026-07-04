@@ -27,6 +27,7 @@ const SAMPLE_ITEM = {
   date: '2026-06-27T10:00:00Z',
   cleanText: 'Hello world content',
   summary: null,
+  isPaywalled: false,
 };
 
 function freshDb() {
@@ -56,6 +57,29 @@ test('initSchema creates tables; calling twice does not throw', () => {
   assert.ok(tables.includes('run_items'));
   assert.ok(tables.includes('state'));
   assert.ok(tables.includes('runs'));
+  db.close();
+});
+
+test('initSchema migrates legacy items table with is_paywalled column', () => {
+  const db = openDb(':memory:');
+  db.exec(`
+    CREATE TABLE items (
+      message_id TEXT PRIMARY KEY,
+      uid        INTEGER,
+      sender     TEXT,
+      subject    TEXT,
+      date       TEXT,
+      clean_text TEXT,
+      summary    TEXT,
+      link       TEXT,
+      created_at TEXT
+    );
+  `);
+
+  initSchema(db);
+
+  const columns = db.prepare('PRAGMA table_info(items)').all().map((r) => r.name);
+  assert.ok(columns.includes('is_paywalled'), 'is_paywalled column missing');
   db.close();
 });
 
@@ -101,6 +125,17 @@ test('insertItem duplicate does not create a second row', () => {
   insertItem(db, SAMPLE_ITEM);
   const count = db.prepare('SELECT COUNT(*) as c FROM items').get().c;
   assert.equal(count, 1);
+  db.close();
+});
+
+test('insertItem stores and reads isPaywalled flag', () => {
+  const db = freshDb();
+  const item = { ...SAMPLE_ITEM, isPaywalled: true };
+
+  insertItem(db, item);
+
+  const found = getItemByMessageId(db, item.messageId);
+  assert.equal(found.isPaywalled, true);
   db.close();
 });
 

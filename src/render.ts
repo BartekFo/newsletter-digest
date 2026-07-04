@@ -158,6 +158,10 @@ ${sorted.map(item => {
           ? `<a class="subject-link" href="${escapeHtml(articleLink)}" target="_blank" rel="noopener">${escapeHtml(item.subject)}</a>`
           : escapeHtml(item.subject);
 
+        const paywallBadge = item.isPaywalled
+          ? '<span class="paywall-badge" title="Newsletter wygląda na częściowo albo w całości płatny">Płatne</span>'
+          : '';
+
         const chatButton = item.messageId
           ? `<button type="button" class="chat-button" data-message-id="${escapeHtml(item.messageId)}" data-subject="${escapeHtml(item.subject)}">Chat</button>`
           : '';
@@ -166,6 +170,7 @@ ${sorted.map(item => {
       <article class="card">
         <h3 class="subject">${subjectHtml}</h3>
         <div class="item-meta">
+          ${paywallBadge}
           <span class="sender">${escapeHtml(item.sender)}</span>
           <span class="dot" aria-hidden="true">·</span>
           <span class="date">${escapeHtml(formatDate(item.date))}</span>${sourceLink}
@@ -404,6 +409,21 @@ ${sorted.map(item => {
   .card .item-meta .sender { color: var(--ink-soft); font-weight: 600; }
   .card .item-meta .dot { color: var(--line-strong); }
   .card .item-meta .date { font-variant-numeric: tabular-nums; }
+  .paywall-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 0 8px;
+    border: 1px solid #d69b74;
+    border-radius: 6px;
+    background: #fff4ec;
+    color: #8a3f18;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
 
   a.gmail-link {
     color: var(--link);

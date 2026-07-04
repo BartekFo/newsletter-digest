@@ -31,6 +31,13 @@ function stripTags(html: string): string {
   return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function decodeHtmlText(value: string): string {
+  return decodeHtmlAttribute(value)
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function getAttr(tag: string, name: string): string | null {
   const match = tag.match(new RegExp(`\\s${name}\\s*=\\s*["']([^"']+)["']`, 'i'));
   return match?.[1] ? decodeHtmlAttribute(match[1]) : null;
@@ -106,10 +113,53 @@ export function extractLink(html: unknown): string | null {
   return null;
 }
 
+const PAYWALL_PATTERNS = [
+  /\bthis post is for paid subscribers\b/i,
+  /\bthis post is only for paid subscribers\b/i,
+  /\bthis post is for paying subscribers\b/i,
+  /\brest of (this|the) (post|article) is for paid subscribers\b/i,
+  /\bkeep reading with a \d+[- ]day free trial\b/i,
+  /\bsubscribe to read (the )?(rest|full post|more)\b/i,
+  /\bsubscribe to .{1,120}\bunlock the rest\b/i,
+  /\bunlock the rest\b/i,
+  /\bupgrade to (a )?paid subscription\b/i,
+  /\bupgrade to paid\b/i,
+  /\bbecome a paid subscriber\b/i,
+  /\bbecome a paying subscriber\b/i,
+  /\bpaid subscribers only\b/i,
+  /\bfor paid subscribers only\b/i,
+  /\bto read the rest,? subscribe\b/i,
+  /\bcontinue reading for paid subscribers\b/i,
+  /\bcontinue reading with a paid subscription\b/i,
+  /\bthis section is for paid subscribers\b/i,
+  /\bten post jest dla płatnych subskrybentów\b/i,
+  /\breszta (tekstu|wpisu|artykułu) (jest )?dla płatnych subskrybentów\b/i,
+  /\bsubskrybuj,? aby (czytać|przeczytać) (dalej|całość|resztę)\b/i,
+  /\btylko dla płatnych subskrybentów\b/i,
+];
+
+/**
+ * Detect whether an email appears to contain a paywalled newsletter teaser.
+ *
+ * The rules intentionally look for explicit paywall copy instead of generic
+ * "subscribe" links, because every newsletter contains subscription boilerplate.
+ *
+ * @param {string} html
+ * @returns {boolean}
+ */
+export function detectPaywall(html: unknown): boolean {
+  if (!html || typeof html !== 'string') return false;
+
+  const text = decodeHtmlText(stripTags(html));
+  if (PAYWALL_PATTERNS.some((pattern) => pattern.test(text))) return true;
+
+  return /\b(paywall|paid-post|subscriber-only|subscription-required)\b/i.test(html);
+}
+
 /**
  * Parse a raw RFC822 email message into structured fields.
  * @param {Buffer|string} raw
- * @returns {Promise<{messageId: string, sender: string, subject: string, date: string, html: string, link: string|null}>}
+ * @returns {Promise<{messageId: string, sender: string, subject: string, date: string, html: string, link: string|null, isPaywalled: boolean}>}
  */
 export async function parseMail(raw: Buffer | string): Promise<ParsedMail> {
   const parsed = await simpleParser(raw);
@@ -122,6 +172,7 @@ export async function parseMail(raw: Buffer | string): Promise<ParsedMail> {
   const date = parsed.date?.toISOString() ?? '';
   const html = parsed.html || parsed.textAsHtml || '';
   const link = extractLink(html);
+  const isPaywalled = detectPaywall(html);
 
-  return { messageId, sender, subject, date, html, link };
+  return { messageId, sender, subject, date, html, link, isPaywalled };
 }

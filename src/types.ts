@@ -27,6 +27,7 @@ export interface ParsedMail {
   date: string;
   html: string;
   link: string | null;
+  isPaywalled: boolean;
 }
 
 export interface DigestItem {
@@ -38,6 +39,7 @@ export interface DigestItem {
   cleanText: string;
   summary: string | null;
   link: string | null;
+  isPaywalled: boolean;
   createdAt?: string;
 }
 

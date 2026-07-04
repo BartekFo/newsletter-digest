@@ -18,6 +18,7 @@ interface ItemRow {
   clean_text: string;
   summary: string | null;
   link: string | null;
+  is_paywalled: number;
   created_at: string;
 }
 
@@ -54,6 +55,7 @@ export function initSchema(db: Db): void {
       clean_text TEXT,
       summary    TEXT,
       link       TEXT,
+      is_paywalled INTEGER DEFAULT 0,
       created_at TEXT
     );
 
@@ -87,6 +89,9 @@ export function initSchema(db: Db): void {
   if (!cols.some((c) => c.name === 'link')) {
     db.exec('ALTER TABLE items ADD COLUMN link TEXT');
   }
+  if (!cols.some((c) => c.name === 'is_paywalled')) {
+    db.exec('ALTER TABLE items ADD COLUMN is_paywalled INTEGER DEFAULT 0');
+  }
 
   const runCols = db.prepare('PRAGMA table_info(runs)').all() as TableInfoRow[];
   if (!runCols.some((c) => c.name === 'weather_json')) {
@@ -113,13 +118,13 @@ export function isKnown(db: Db, messageId: string): boolean {
 }
 
 export function insertItem(db: Db, item: DigestItem): boolean {
-  const { messageId, uid, sender, subject, date, cleanText, summary, link } = item;
+  const { messageId, uid, sender, subject, date, cleanText, summary, link, isPaywalled } = item;
   const result = db
     .prepare(
-      `INSERT OR IGNORE INTO items (message_id, uid, sender, subject, date, clean_text, summary, link, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      `INSERT OR IGNORE INTO items (message_id, uid, sender, subject, date, clean_text, summary, link, is_paywalled, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
     )
-    .run(messageId, uid, sender, subject, date, cleanText, summary ?? null, link ?? null);
+    .run(messageId, uid, sender, subject, date, cleanText, summary ?? null, link ?? null, isPaywalled ? 1 : 0);
   return result.changes === 1;
 }
 
@@ -164,6 +169,7 @@ function rowToItem(row: ItemRow): DigestItem {
     cleanText: row.clean_text,
     summary: row.summary,
     link: row.link,
+    isPaywalled: row.is_paywalled === 1,
     createdAt: row.created_at,
   };
 }

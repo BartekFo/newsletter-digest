@@ -11,6 +11,7 @@ const ITEM_A = {
   date: '2024-01-15T10:00:00.000Z',
   cleanText: 'Body A',
   summary: 'Summary of January newsletter.',
+  isPaywalled: false,
 };
 
 const ITEM_B = {
@@ -21,6 +22,7 @@ const ITEM_B = {
   date: '2024-02-20T10:00:00.000Z',
   cleanText: 'Body B',
   summary: 'Summary of February newsletter.',
+  isPaywalled: false,
 };
 
 const META = { ranAt: '2024-03-01T08:00:00.000Z', newCount: 2 };
@@ -187,6 +189,20 @@ test('subject link rejects non-http scheme (no javascript: href)', () => {
   const html = renderHtml([evil], META);
   assert.ok(!html.includes('javascript:alert(1)'), 'unsafe scheme reached href');
   assert.ok(!html.includes('class="subject-link"'), 'unsafe link still wrapped subject');
+});
+
+test('paywalled item renders a visible paid badge', () => {
+  const paid = { ...ITEM_A, isPaywalled: true };
+  const html = renderHtml([paid], META);
+
+  assert.ok(html.includes('class="paywall-badge"'), 'paywall badge missing');
+  assert.ok(html.includes('Płatne'), 'paywall label missing');
+});
+
+test('free item does not render paid badge', () => {
+  const html = renderHtml([ITEM_A], META);
+
+  assert.ok(!html.includes('class="paywall-badge"'), 'paywall badge rendered for free item');
 });
 
 // ---------------------------------------------------------------------------

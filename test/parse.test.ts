@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { parseMail, extractLink } from '../src/parse.js';
+import { parseMail, extractLink, detectPaywall } from '../src/parse.js';
 
 const fixtureRaw = await readFile(
   new URL('./fixtures/sample-newsletter.eml', import.meta.url),
@@ -43,6 +43,7 @@ test('parseMail: result has all required keys', async () => {
   assert.ok('date' in result);
   assert.ok('html' in result);
   assert.ok('link' in result);
+  assert.ok('isPaywalled' in result);
 });
 
 test('parseMail: extracts web-version link from newsletter body', async () => {
@@ -129,4 +130,43 @@ test('extractLink: returns null when neither present', () => {
   assert.equal(extractLink('<p>no canonical here</p>'), null);
   assert.equal(extractLink(''), null);
   assert.equal(extractLink(null), null);
+});
+
+test('detectPaywall: marks explicit Substack paid-subscriber teaser', () => {
+  const html = `
+    <article>
+      <p>Here is the free preview.</p>
+      <p>This post is for paid subscribers</p>
+      <a href="https://example.substack.com/subscribe">Subscribe to read more</a>
+    </article>
+  `;
+
+  assert.equal(detectPaywall(html), true);
+});
+
+test('detectPaywall: marks paid subscriber copy with HTML entities', () => {
+  const html = '<p>Keep reading with a 7-day free trial</p><p>Become a paid&nbsp;subscriber.</p>';
+
+  assert.equal(detectPaywall(html), true);
+});
+
+test('detectPaywall: marks unlock-the-rest paid newsletter copy', () => {
+  const html = `
+    <p>The clearer you define the outcome, the better the AI performs.</p>
+    <p>Subscribe to Engineering Leadership to unlock the rest.</p>
+    <p>Become a paying subscriber of Engineering Leadership to get access to this post and other subscriber-only content.</p>
+    <a href="https://example.substack.com/subscribe">Upgrade to paid</a>
+  `;
+
+  assert.equal(detectPaywall(html), true);
+});
+
+test('detectPaywall: does not mark ordinary subscription boilerplate', () => {
+  const html = `
+    <p>Read the full newsletter above.</p>
+    <a href="https://newsletter.example.com/subscribe">Subscribe</a>
+    <a href="https://newsletter.example.com/account">Manage subscription</a>
+  `;
+
+  assert.equal(detectPaywall(html), false);
 });

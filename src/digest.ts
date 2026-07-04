@@ -151,6 +151,7 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
         cleanText,
         summary: null,
         link: mail.link ?? null,
+        isPaywalled: mail.isPaywalled,
       });
 
       logger.info(

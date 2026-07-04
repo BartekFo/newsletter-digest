@@ -22,6 +22,8 @@ const FAKE_MAILS = [
       subject: 'Weekly Digest #1',
       date: '2025-01-14T08:00:00.000Z',
       html: '<p>Content one</p>',
+      link: null,
+      isPaywalled: false,
     },
     cleanText: 'Content one',
     summary: 'Podsumowanie pierwszego maila.',
@@ -35,6 +37,8 @@ const FAKE_MAILS = [
       subject: 'Breaking News',
       date: '2025-01-14T09:00:00.000Z',
       html: '<p>Content two</p>',
+      link: null,
+      isPaywalled: true,
     },
     cleanText: 'Content two',
     summary: 'Podsumowanie drugiego maila.',
@@ -143,6 +147,7 @@ describe('runDigest', () => {
     for (const item of items) {
       const expected = FAKE_MAILS.find((m) => m.uid === item.uid);
       assert.equal(item.summary, expected.summary, `summary for uid ${item.uid}`);
+      assert.equal(item.isPaywalled, expected.parsed.isPaywalled, `isPaywalled for uid ${item.uid}`);
     }
   });
 
@@ -157,6 +162,8 @@ describe('runDigest', () => {
       assert.ok(html.includes(mail.parsed.subject), `html should contain subject: ${mail.parsed.subject}`);
       assert.ok(html.includes(mail.summary), `html should contain summary: ${mail.summary}`);
     }
+
+    assert.ok(html.includes('class="paywall-badge"'), 'html should contain paid badge');
   });
 
   it('rendered html contains weather and HackerNews data', async () => {

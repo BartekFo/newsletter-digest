@@ -26,6 +26,7 @@ const ITEM = {
   cleanText: 'This is the newsletter body for chat.',
   summary: 'A short summary.',
   link: null,
+  isPaywalled: false,
 };
 
 async function withServer(options, fn) {
