@@ -161,11 +161,59 @@ test('detectPaywall: marks unlock-the-rest paid newsletter copy', () => {
   assert.equal(detectPaywall(html), true);
 });
 
+test('detectPaywall: marks copy that explicitly requires a subscription to read the rest', () => {
+  assert.equal(detectPaywall('<p>Subscribe to read the rest.</p>'), true);
+});
+
 test('detectPaywall: does not mark ordinary subscription boilerplate', () => {
   const html = `
     <p>Read the full newsletter above.</p>
     <a href="https://newsletter.example.com/subscribe">Subscribe</a>
     <a href="https://newsletter.example.com/account">Manage subscription</a>
+  `;
+
+  assert.equal(detectPaywall(html), false);
+});
+
+test('detectPaywall: does not mark a complete article with a paid subscription CTA in its footer', () => {
+  const html = `
+    <article>
+      <p>This is the complete article, available to everyone.</p>
+      <footer>Enjoyed it? Upgrade to a paid subscription to support our work.</footer>
+    </article>
+  `;
+
+  assert.equal(detectPaywall(html), false);
+});
+
+test('detectPaywall: does not mark a complete article with a paid-subscriber CTA in its footer', () => {
+  const html = `
+    <article>
+      <p>This is the complete article, available to everyone.</p>
+      <footer>Become a paid subscriber to support our work and get bonus posts.</footer>
+    </article>
+  `;
+
+  assert.equal(detectPaywall(html), false);
+});
+
+test('detectPaywall: does not mark a complete article with a paying-subscriber CTA in its footer', () => {
+  const html = `
+    <article>
+      <p>This is the complete article, available to everyone.</p>
+      <footer>Become a paying subscriber to support our work and get bonus posts.</footer>
+    </article>
+  `;
+
+  assert.equal(detectPaywall(html), false);
+});
+
+test('detectPaywall: does not mark a complete article with an upgrade CTA in its footer', () => {
+  const html = `
+    <article>
+      <p>This is the complete article, available to everyone.</p>
+      <footer>Upgrade to paid for bonus posts and to support our work.</footer>
+    </article>
   `;
 
   assert.equal(detectPaywall(html), false);
