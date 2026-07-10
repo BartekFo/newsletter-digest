@@ -1,36 +1,36 @@
 # Newsletter Digest
 
-Prywatny, lokalny czytnik newsletterów z Gmaila. Pobiera nowe wiadomości oznaczone
-etykietą `Newsletters`, oczyszcza ich treść, streszcza je po polsku lokalnym modelem
-Ollama i pokazuje w przeglądarce jako osobisty digest.
+A private, local Gmail newsletter reader. It fetches new messages labelled
+`Newsletters`, extracts their content, summarizes it in Polish with a local Ollama model,
+and presents the results in a browser as a personal digest.
 
-Nie wysyła treści newsletterów do płatnego API AI.
+It does not send newsletter content to a paid AI API.
 
-## Co potrafi
+## Features
 
-- pobiera wyłącznie nowe newslettery z wybranego folderu Gmaila;
-- zapamiętuje już przeczytane wiadomości, więc kolejne uruchomienia nie dublują treści;
-- tworzy krótkie streszczenia po polsku przy użyciu modelu działającego na Twoim komputerze;
-- otwiera lokalny reader pod `http://localhost:3789`;
-- zachowuje historię poprzednich digestów;
-- pozwala dopytać lokalny model o konkretny newsletter;
-- dodaje aktualną pogodę i najpopularniejsze wpisy z Hacker News, jeśli te publiczne usługi są dostępne.
+- Fetches only new newsletters from a chosen Gmail folder.
+- Remembers previously processed messages, so later runs do not create duplicates.
+- Creates short Polish summaries with a model running on your computer.
+- Opens a local reader at `http://localhost:3789`.
+- Keeps a history of previous digests.
+- Lets you ask the local model questions about an individual newsletter.
+- Adds current weather and top Hacker News stories when those public services are available.
 
-## Zanim zaczniesz
+## Before you start
 
-Potrzebujesz:
+You will need:
 
-- komputera z [Node.js 22 lub nowszym](https://nodejs.org/);
-- zainstalowanego i uruchomionego [Ollama](https://ollama.com/);
-- konta Gmail z włączonym IMAP-em i utworzonym **hasłem do aplikacji**;
-- kilku minut na ustawienie jednego filtra Gmaila dla każdego nowego newslettera.
+- a computer with [Node.js 22 or newer](https://nodejs.org/);
+- [Ollama](https://ollama.com/) installed and running;
+- a Gmail account with IMAP enabled and an **App Password** created;
+- a few minutes to set up one Gmail filter for each new newsletter sender.
 
-Hasła do aplikacji są dostępne, gdy konto Google ma włączoną weryfikację dwuetapową.
-Na kontach firmowych administrator może je wyłączyć.
+App Passwords are available after enabling two-step verification on your Google Account.
+An organization administrator can disable them for work accounts.
 
-## Uruchomienie krok po kroku
+## Getting started
 
-### 1. Pobierz projekt i zainstaluj zależności
+### 1. Clone the project and install dependencies
 
 ```bash
 git clone https://github.com/BartekFo/newsletter-digest.git
@@ -39,51 +39,52 @@ npm install
 npm run build
 ```
 
-### 2. Przygotuj lokalny model AI
+### 2. Prepare a local AI model
 
-Zainstaluj Ollama, a następnie pobierz model. Domyślna konfiguracja projektu używa
-modelu `gemma4:12b`:
+Install Ollama and then download a model. The project defaults to `gemma4:12b`:
 
 ```bash
 ollama pull gemma4:12b
 ```
 
-Jeśli chcesz użyć innego modelu, wpisz jego nazwę w `OLLAMA_MODEL` w pliku `.env`
-(opisanym w kolejnym kroku). Model działa lokalnie, więc jego wymagania sprzętowe
-zależą od wybranego wariantu.
+To use another model, set its name in `OLLAMA_MODEL` in the `.env` file described in
+the next step. Because the model runs locally, hardware requirements depend on the model
+you choose.
 
-### 3. Utwórz hasło do aplikacji Google
+### 3. Create a Google App Password
 
-W ustawieniach bezpieczeństwa konta Google:
+In your Google Account security settings:
 
-1. Włącz weryfikację dwuetapową, jeśli nie jest jeszcze włączona.
-2. Utwórz **hasło do aplikacji** dla aplikacji pocztowej.
-3. Skopiuj wygenerowane hasło — będzie potrzebne tylko w pliku `.env` na Twoim komputerze.
+1. Enable two-step verification if it is not already enabled.
+2. Create an **App Password** for a mail app.
+3. Copy the generated password — it is needed only in the local `.env` file.
 
-Nie używaj zwykłego hasła do konta Google i nigdy nie dodawaj pliku `.env` do repozytorium.
+Do not use your regular Google Account password, and never commit the `.env` file to the
+repository.
 
-### 4. Oznacz newslettery w Gmailu
+### 4. Label newsletters in Gmail
 
-Projekt czyta wyłącznie wiadomości z etykietą `Newsletters`.
+The project reads messages only from the `Newsletters` label.
 
-1. W Gmailu otwórz newsletter od wybranego nadawcy.
-2. Z menu wiadomości wybierz **Filtruj wiadomości podobne do tych**.
-3. Utwórz filtr, który nadaje etykietę `Newsletters` (Gmail utworzy ją, jeśli jeszcze nie istnieje).
-4. Powtórz to tylko dla każdego nowego nadawcy newslettera.
+1. Open a newsletter from the sender you want to follow in Gmail.
+2. From the message menu, select **Filter messages like these**.
+3. Create a filter that applies the `Newsletters` label. Gmail creates it if it does not
+   already exist.
+4. Repeat this only for each new newsletter sender.
 
-To celowe: aplikacja nie zgaduje, które maile są newsletterami, więc nie powinna
-przypadkowo analizować prywatnej lub służbowej korespondencji.
+This is intentional: the application does not guess which messages are newsletters, so it
+does not accidentally analyze personal or work correspondence.
 
-### 5. Skonfiguruj projekt
+### 5. Configure the project
 
-Utwórz w głównym katalogu projektu plik o nazwie `.env` i uzupełnij go:
+Create a file named `.env` in the project root and fill it in:
 
 ```dotenv
-# Wymagane
-GMAIL_USER=twoj.adres@gmail.com
-GMAIL_APP_PASSWORD=wklej_tutaj_haslo_do_aplikacji
+# Required
+GMAIL_USER=your.address@gmail.com
+GMAIL_APP_PASSWORD=paste_your_app_password_here
 
-# Opcjonalne — poniższe wartości są domyślne
+# Optional — these are the default values
 IMAP_FOLDER=Newsletters
 BOOTSTRAP_DAYS=7
 OLLAMA_MODEL=gemma4:12b
@@ -91,67 +92,67 @@ WEATHER_CITY=Warsaw
 PORT=3789
 ```
 
-Przy pierwszym uruchomieniu aplikacja pobierze newslettery z ostatnich 7 dni.
-Później pobiera już tylko wiadomości, które pojawiły się od ostatniego udanego przebiegu.
+On its first run, the application fetches newsletters from the previous seven days.
+After that, it fetches only messages that arrived since the last successful run.
 
-### 6. Włącz reader
+### 6. Start the reader
 
 ```bash
 npm start
 ```
 
-Na macOS przeglądarka powinna otworzyć adres `http://localhost:3789` automatycznie.
-Na Linuxie i Windowsie otwórz ten adres ręcznie. Przy starcie aplikacja sprawdzi nowe
-newslettery, zapisze digest i pokaże ostatni niepusty widok.
+On macOS, your browser should open `http://localhost:3789` automatically. On Linux and
+Windows, open that address manually. At startup, the application checks for new
+newsletters, saves a digest, and displays the latest non-empty view.
 
-Zatrzymaj serwer w terminalu skrótem `Ctrl+C`.
+Stop the server with `Ctrl+C` in the terminal.
 
-## Jak używać
+## Using the reader
 
-- Użyj przycisku **Pobierz nowe / Odśwież**, aby ręcznie sprawdzić skrzynkę.
-- Otwórz **Historię digestów**, aby wrócić do wcześniejszych zestawów.
-- Przy dowolnym newsletterze wybierz **Chat**, aby zadać pytanie o jego treść.
-- Gdy pojawi się newsletter od nowego nadawcy, dodaj mu filtr w Gmailu — przy kolejnych
-wiadomościach etykieta zostanie nadana automatycznie.
+- Use **Pobierz nowe** (Fetch new) to check your inbox manually.
+- Open **Historia** (History) to return to earlier digests.
+- Select **Chat** on any newsletter to ask a question about its contents.
+- When a newsletter arrives from a new sender, add its Gmail filter. Future messages will
+  receive the label automatically.
 
-## Prywatność i koszty
+## Privacy and costs
 
-Treść newsletterów, baza danych i rozmowy z newsletterami pozostają na Twoim komputerze.
-Model Ollama działa lokalnie, dlatego narzędzie nie nalicza opłat za tokeny ani nie wymaga
-klucza do usługi AI.
+Newsletter content, the database, and conversations about newsletters remain on your
+computer. Ollama runs locally, so the tool does not charge for tokens or require an AI
+service API key.
 
-Aplikacja łączy się z Gmailem oraz pobiera pogodę i najpopularniejsze wpisy z Hacker
-News z publicznych usług. Jeśli usługa pogody lub Hacker News jest niedostępna, digest
-nadal działa — po prostu nie pokaże tej sekcji. Dostęp do Gmaila służy wyłącznie do
-odczytu folderu z newsletterami.
+The application connects to Gmail and retrieves weather and top Hacker News stories from
+public services. If the weather service or Hacker News is unavailable, the digest still
+works; it simply omits that section. Gmail access is used only to read the newsletter
+folder.
 
-## Dane lokalne
+## Local files
 
-W katalogu projektu powstaną pliki ignorowane przez Git:
+The following Git-ignored files will appear in the project directory:
 
-- `.env` — dane dostępowe do Gmaila;
-- `digest.db` — lokalna baza newsletterów i historii digestów;
-- `dist/` — skompilowana wersja aplikacji.
+- `.env` — Gmail credentials;
+- `digest.db` — the local newsletter database and digest history;
+- `dist/` — the compiled application.
 
-Jeśli zamiast readera chcesz wygenerować jednorazowy plik HTML, użyj:
+To generate a one-off static HTML file instead of using the reader, run:
 
 ```bash
 npm run digest:export
 ```
 
-Plik `digest.html` będzie wtedy statycznym eksportem widoku.
+This creates `digest.html`, a static export of the view.
 
-## Rozwój projektu
+## Development
 
 ```bash
 npm test
 ```
 
-Testy nie wymagają dostępu do Twojej skrzynki Gmail. Test integracyjny IMAP uruchomi się
-dopiero, gdy w środowisku są ustawione dane dostępowe.
+The tests do not require access to your Gmail inbox. The IMAP integration test runs only
+when credentials are set in the environment.
 
-## Licencja
+## License
 
-Projekt jest udostępniony na licencji [MIT](LICENSE). Możesz używać, kopiować,
-modyfikować i rozpowszechniać jego kod — również komercyjnie — pod warunkiem zachowania
-informacji o prawach autorskich i licencji.
+This project is available under the [MIT License](LICENSE). You may use, copy, modify, and
+distribute the code, including for commercial purposes, as long as you retain the copyright
+and license notices.
