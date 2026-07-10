@@ -728,6 +728,8 @@ ${renderHackerNews(meta.hackernews)}
   const question = document.getElementById('chat-question');
   const close = document.querySelector('.chat-close');
   const send = form.querySelector('button[type="submit"]');
+  // Give the server five seconds to return its structured five-minute timeout response.
+  const CHAT_CLIENT_TIMEOUT_MS = 305_000;
   let messageId = null;
   let history = [];
   let sending = false;
@@ -777,9 +779,9 @@ ${renderHackerNews(meta.hackernews)}
     question.value = '';
     addMessage('user', text);
     setSending(true);
-    const loading = addMessage('loading', 'Czekam na odpowiedź modelu…');
+    const loading = addMessage('loading', 'Czekam na odpowiedź modelu… To może potrwać kilka minut.');
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 65_000);
+    const timeout = window.setTimeout(() => controller.abort(), CHAT_CLIENT_TIMEOUT_MS);
 
     try {
       const response = await fetch('/chat', {

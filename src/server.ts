@@ -27,7 +27,8 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export const CHAT_TIMEOUT_MS = 60_000;
+// A local 12B model can need more than a minute to load and answer from a full article.
+export const CHAT_TIMEOUT_MS = 5 * 60_000;
 
 class ChatTimeoutError extends Error {
   constructor(timeoutMs: number) {

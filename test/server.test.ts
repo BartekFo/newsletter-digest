@@ -236,3 +236,18 @@ test('POST /refresh redirects to new snapshot when runDigest creates one', async
     assert.ok(response.headers.get('location').startsWith('/runs/1'));
   });
 });
+
+test('POST /refresh keeps the latest snapshot when no new newsletters are found', async () => {
+  await withServer({
+    runDigest: async () => ({ fetched: 0, newItems: 0, runId: null }),
+  }, async ({ db, baseUrl }) => {
+    insertItem(db, ITEM);
+    const runId = recordRun(db, { fetched: 1, newItems: 1, durationMs: 10, ok: true });
+    addRunItems(db, runId, [ITEM.messageId]);
+
+    const response = await fetch(`${baseUrl}/refresh`, { method: 'POST', redirect: 'manual' });
+
+    assert.equal(response.status, 303);
+    assert.ok(response.headers.get('location').startsWith('/runs/1?notice='));
+  });
+});

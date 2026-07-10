@@ -52,6 +52,7 @@ function makeFakeMail(mail) {
 function makeDeps(db, overrides = {}) {
   let capturedHtml = null;
   let openFileCalled = false;
+  let writeFileCalls = 0;
 
   const deps = {
     db,
@@ -100,6 +101,7 @@ function makeDeps(db, overrides = {}) {
     ],
     renderHtml,
     writeFile: async (_path, html) => {
+      writeFileCalls++;
       capturedHtml = html;
     },
     openFile: async (_path) => {
@@ -109,6 +111,7 @@ function makeDeps(db, overrides = {}) {
     // Expose test-only helpers
     _getHtml: () => capturedHtml,
     _openFileCalled: () => openFileCalled,
+    _writeFileCalls: () => writeFileCalls,
   };
 
   return { ...deps, ...overrides };
@@ -260,8 +263,9 @@ describe('runDigest', () => {
       const count = db.prepare('SELECT COUNT(*) AS c FROM items').get().c;
       assert.equal(count, 2);
 
-      const snapshotItems = getItemsByRunId(db, 2);
-      assert.deepEqual(snapshotItems, []);
+      const runCount = db.prepare('SELECT COUNT(*) AS c FROM runs').get().c;
+      assert.equal(runCount, 1, 'an empty refresh must not create a new digest snapshot');
+      assert.equal(deps._writeFileCalls(), 1, 'an empty refresh must not overwrite digest.html');
     });
   });
 

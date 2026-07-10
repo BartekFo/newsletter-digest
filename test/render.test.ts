@@ -144,10 +144,11 @@ test('item with messageId renders a Chat button with data-message-id', () => {
 test('chat UI communicates progress and prevents duplicate sends while waiting', () => {
   const html = renderHtml([ITEM_A], META);
 
-  assert.ok(html.includes('Czekam na odpowiedź modelu…'), 'loading state missing');
+  assert.ok(html.includes('Czekam na odpowiedź modelu… To może potrwać kilka minut.'), 'loading state missing');
   assert.ok(html.includes("if (!text || !messageId || sending) return;"), 'duplicate-send guard missing');
   assert.ok(html.includes('if (sending) return;'), 'article-switch guard missing');
   assert.ok(html.includes('AbortController'), 'client timeout controller missing');
+  assert.ok(html.includes('CHAT_CLIENT_TIMEOUT_MS = 305_000'), 'client timeout should allow a slow local model');
   assert.ok(html.includes('Odpowiedź trwa zbyt długo'), 'client timeout message missing');
 });
 

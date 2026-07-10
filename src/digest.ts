@@ -188,6 +188,15 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
       setLastUid(db, maxUid);
     }
 
+    if (newUids.length === 0) {
+      const durationMs = Date.now() - startMs;
+      logger.info(
+        { fetched: fetched.length, durationMs },
+        'Brak nowych newsletterów — zachowuję poprzedni digest',
+      );
+      return { fetched: fetched.length, newItems: 0, runId: null };
+    }
+
     logger.info({ newItems: newUids.length }, 'Przetworzono maile, pobieram pogodę i HackerNews…');
     const items = getItemsByUids(db, newUids);
 
