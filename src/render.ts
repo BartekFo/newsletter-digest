@@ -626,6 +626,12 @@ ${sorted.map(item => {
     background: #fff1f0;
     color: #7f1d1d;
   }
+  .chat-message.loading {
+    align-self: flex-start;
+    background: var(--bg);
+    color: var(--muted);
+    font-style: italic;
+  }
   .chat-form {
     display: flex;
     gap: 10px;
@@ -651,6 +657,11 @@ ${sorted.map(item => {
     cursor: pointer;
     font: 700 14px/1 var(--sans);
     padding: 0 16px;
+  }
+  .chat-form button:disabled,
+  .chat-form textarea:disabled {
+    cursor: wait;
+    opacity: 0.65;
   }
 
   /* ---------- MOBILE ---------- */
@@ -716,8 +727,10 @@ ${renderHackerNews(meta.hackernews)}
   const form = document.getElementById('chat-form');
   const question = document.getElementById('chat-question');
   const close = document.querySelector('.chat-close');
+  const send = form.querySelector('button[type="submit"]');
   let messageId = null;
   let history = [];
+  let sending = false;
 
   function addMessage(role, content) {
     const el = document.createElement('div');
@@ -725,13 +738,23 @@ ${renderHackerNews(meta.hackernews)}
     el.textContent = content;
     log.appendChild(el);
     log.scrollTop = log.scrollHeight;
+    return el;
+  }
+
+  function setSending(value) {
+    sending = value;
+    question.disabled = value;
+    send.disabled = value;
+    send.textContent = value ? 'Czekam…' : 'Wyślij';
   }
 
   document.querySelectorAll('.chat-button').forEach((button) => {
     button.addEventListener('click', () => {
+      if (sending) return;
       messageId = button.dataset.messageId;
       history = [];
       log.textContent = '';
+      setSending(false);
       title.textContent = button.dataset.subject || 'Chat';
       panel.hidden = false;
       question.focus();
@@ -749,23 +772,37 @@ ${renderHackerNews(meta.hackernews)}
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const text = question.value.trim();
-    if (!text || !messageId) return;
+    if (!text || !messageId || sending) return;
 
     question.value = '';
     addMessage('user', text);
+    setSending(true);
+    const loading = addMessage('loading', 'Czekam na odpowiedź modelu…');
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 65_000);
 
     try {
       const response = await fetch('/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ messageId, question: text, history }),
+        signal: controller.signal,
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'Chat nie odpowiedział.');
+      loading.remove();
       addMessage('assistant', data.answer);
       history.push({ role: 'user', content: text }, { role: 'assistant', content: data.answer });
     } catch (err) {
-      addMessage('error', err instanceof Error ? err.message : String(err));
+      loading.remove();
+      const message = err instanceof Error && err.name === 'AbortError'
+        ? 'Odpowiedź trwa zbyt długo. Sprawdź, czy Ollama działa i model jest gotowy.'
+        : err instanceof Error ? err.message : String(err);
+      addMessage('error', message);
+    } finally {
+      window.clearTimeout(timeout);
+      setSending(false);
+      question.focus();
     }
   });
 })();

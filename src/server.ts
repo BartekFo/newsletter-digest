@@ -27,6 +27,28 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+export const CHAT_TIMEOUT_MS = 60_000;
+
+class ChatTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Ollama nie odpowiedziała w ciągu ${Math.round(timeoutMs / 1_000)} sekund.`);
+    this.name = 'ChatTimeoutError';
+  }
+}
+
+async function withChatTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  const timeoutTask = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new ChatTimeoutError(timeoutMs)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([task, timeoutTask]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 function openUrl(url: string): Promise<void> {
   return new Promise<void>((resolve) => {
     if (process.platform !== 'darwin') {
@@ -97,6 +119,7 @@ export interface ReaderServerDeps {
   logger?: AppLogger;
   runDigest?: (deps: DigestDeps) => Promise<{ fetched: number; newItems: number; runId: number | null }>;
   chatWithArticle?: typeof chatWithArticle;
+  chatTimeoutMs?: number;
   now?: () => Date;
 }
 
@@ -144,6 +167,7 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
   const logger = deps.logger ?? silentLogger;
   const refresh = deps.runDigest ?? runDigest;
   const chat = deps.chatWithArticle ?? chatWithArticle;
+  const chatTimeoutMs = deps.chatTimeoutMs ?? CHAT_TIMEOUT_MS;
 
   return http.createServer(async (req, res) => {
     try {
@@ -228,16 +252,37 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
           return;
         }
 
+        const startedAt = Date.now();
+        const logContext = {
+          messageId: item.messageId,
+          subject: item.subject,
+          model: deps.config.ollamaModel,
+        };
+        logger.info(logContext, 'Rozpoczęto chat z newsletterem');
+
         try {
-          const answer = await chat({
-            articleText: item.cleanText,
-            question: data.question,
-            history: data.history ?? [],
-            model: deps.config.ollamaModel,
-          });
+          const answer = await withChatTimeout(
+            chat({
+              articleText: item.cleanText,
+              question: data.question,
+              history: data.history ?? [],
+              model: deps.config.ollamaModel,
+            }),
+            chatTimeoutMs,
+          );
+          logger.info({ ...logContext, durationMs: Date.now() - startedAt }, 'Chat zakończony');
           sendJson(res, 200, { answer });
         } catch (err) {
-          logger.error({ err: errorMessage(err), messageId: item.messageId }, 'Chat nieudany');
+          if (err instanceof ChatTimeoutError) {
+            logger.error(
+              { ...logContext, durationMs: Date.now() - startedAt, timeoutMs: chatTimeoutMs },
+              'Chat przekroczył limit czasu',
+            );
+            sendJson(res, 504, { error: `${err.message} Sprawdź, czy Ollama działa i model jest gotowy.` });
+            return;
+          }
+
+          logger.error({ ...logContext, err: errorMessage(err), durationMs: Date.now() - startedAt }, 'Chat nieudany');
           sendJson(res, 502, { error: `Ollama nie odpowiedziała: ${errorMessage(err)}` });
         }
         return;

@@ -193,6 +193,34 @@ test('POST /chat for known item returns answer JSON', async () => {
   });
 });
 
+test('POST /chat stops waiting for an unresponsive model and logs the timeout', async () => {
+  const logs = [];
+  const logger = {
+    info: (context, message) => logs.push({ level: 'info', context, message }),
+    error: (context, message) => logs.push({ level: 'error', context, message }),
+  };
+
+  await withServer({
+    logger,
+    chatTimeoutMs: 10,
+    chatWithArticle: async () => new Promise(() => {}),
+  }, async ({ db, baseUrl }) => {
+    insertItem(db, ITEM);
+
+    const response = await fetch(`${baseUrl}/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messageId: ITEM.messageId, question: 'Co tu jest?' }),
+    });
+    const json = await response.json();
+
+    assert.equal(response.status, 504);
+    assert.match(json.error, /Ollama nie odpowiedziała w ciągu/);
+    assert.ok(logs.some((entry) => entry.message === 'Rozpoczęto chat z newsletterem'));
+    assert.ok(logs.some((entry) => entry.message === 'Chat przekroczył limit czasu'));
+  });
+});
+
 test('POST /refresh redirects to new snapshot when runDigest creates one', async () => {
   await withServer({
     runDigest: async ({ db }) => {

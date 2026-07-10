@@ -141,6 +141,16 @@ test('item with messageId renders a Chat button with data-message-id', () => {
   assert.ok(html.includes('data-message-id="&lt;a@test&gt;"'), 'message id data attribute missing');
 });
 
+test('chat UI communicates progress and prevents duplicate sends while waiting', () => {
+  const html = renderHtml([ITEM_A], META);
+
+  assert.ok(html.includes('Czekam na odpowiedź modelu…'), 'loading state missing');
+  assert.ok(html.includes("if (!text || !messageId || sending) return;"), 'duplicate-send guard missing');
+  assert.ok(html.includes('if (sending) return;'), 'article-switch guard missing');
+  assert.ok(html.includes('AbortController'), 'client timeout controller missing');
+  assert.ok(html.includes('Odpowiedź trwa zbyt długo'), 'client timeout message missing');
+});
+
 test('render does not include cleanText body', () => {
   const html = renderHtml([ITEM_A, ITEM_B], META);
 
