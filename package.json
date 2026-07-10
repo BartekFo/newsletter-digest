@@ -14,7 +14,7 @@
   "engines": {
     "node": ">=22"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "dependencies": {
     "@postlight/parser": "^2.2.3",
     "better-sqlite3": "^12.11.1",

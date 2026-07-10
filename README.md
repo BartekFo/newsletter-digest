@@ -152,5 +152,6 @@ dopiero, gdy w środowisku są ustawione dane dostępowe.
 
 ## Licencja
 
-Projekt ma obecnie status `UNLICENSED`. Jeżeli ma być używany lub rozwijany przez inne
-osoby, przed publicznym udostępnieniem warto wybrać i dodać licencję.
+Projekt jest udostępniony na licencji [MIT](LICENSE). Możesz używać, kopiować,
+modyfikować i rozpowszechniać jego kod — również komercyjnie — pod warunkiem zachowania
+informacji o prawach autorskich i licencji.
