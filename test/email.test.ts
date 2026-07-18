@@ -8,9 +8,11 @@ import {
   type DigestEmailTransport,
 } from '../src/email.js';
 import type { AppConfig } from '../src/types.js';
+import { buildDigestItem } from './builders.js';
 
 const ITEMS = [
-  {
+  buildDigestItem({
+    id: 'newsletter-email-test',
     messageId: '<digest@example.com>',
     uid: 7,
     sender: 'Example Newsletter <hello@example.com>',
@@ -20,7 +22,7 @@ const ITEMS = [
     summary: 'Krótkie podsumowanie artykułu.',
     link: 'https://example.com/article',
     isPaywalled: false,
-  },
+  }),
 ];
 
 const META = {

@@ -33,6 +33,13 @@ export interface ParsedMail {
 }
 
 export interface DigestItem {
+  id: string;
+  source: {
+    type: string;
+    externalId: string;
+    cursor: string;
+    metadata: Record<string, string | number>;
+  };
   messageId: string;
   uid: number;
   sender: string;

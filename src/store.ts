@@ -10,6 +10,10 @@ interface TableInfoRow {
 }
 
 interface ItemRow {
+  newsletter_id: string | null;
+  source_type: string | null;
+  source_external_id: string | null;
+  source_cursor: string | null;
   message_id: string;
   uid: number;
   sender: string;
@@ -71,6 +75,10 @@ export function initSchema(db: Db): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS items (
       message_id TEXT PRIMARY KEY,
+      newsletter_id TEXT,
+      source_type TEXT,
+      source_external_id TEXT,
+      source_cursor TEXT,
       uid        INTEGER,
       sender     TEXT,
       subject    TEXT,
@@ -101,6 +109,7 @@ export function initSchema(db: Db): void {
     CREATE TABLE IF NOT EXISTS run_items (
       run_id     INTEGER NOT NULL,
       message_id TEXT NOT NULL,
+      newsletter_id TEXT,
       PRIMARY KEY (run_id, message_id),
       FOREIGN KEY (run_id) REFERENCES runs(id),
       FOREIGN KEY (message_id) REFERENCES items(message_id)
@@ -115,6 +124,41 @@ export function initSchema(db: Db): void {
   if (!cols.some((c) => c.name === 'is_paywalled')) {
     db.exec('ALTER TABLE items ADD COLUMN is_paywalled INTEGER DEFAULT 0');
   }
+  if (!cols.some((c) => c.name === 'newsletter_id')) {
+    db.exec('ALTER TABLE items ADD COLUMN newsletter_id TEXT');
+  }
+  if (!cols.some((c) => c.name === 'source_type')) {
+    db.exec('ALTER TABLE items ADD COLUMN source_type TEXT');
+  }
+  if (!cols.some((c) => c.name === 'source_external_id')) {
+    db.exec('ALTER TABLE items ADD COLUMN source_external_id TEXT');
+  }
+  if (!cols.some((c) => c.name === 'source_cursor')) {
+    db.exec('ALTER TABLE items ADD COLUMN source_cursor TEXT');
+  }
+
+  db.exec(`
+    UPDATE items
+    SET newsletter_id = COALESCE(newsletter_id, 'newsletter-' || lower(hex(randomblob(16)))),
+        source_type = COALESCE(source_type, 'gmail'),
+        source_external_id = COALESCE(source_external_id, message_id),
+        source_cursor = COALESCE(source_cursor, CAST(uid AS TEXT));
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_items_newsletter_id ON items(newsletter_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_items_source_identity ON items(source_type, source_external_id);
+  `);
+
+  const runItemCols = db.prepare('PRAGMA table_info(run_items)').all() as TableInfoRow[];
+  if (!runItemCols.some((c) => c.name === 'newsletter_id')) {
+    db.exec('ALTER TABLE run_items ADD COLUMN newsletter_id TEXT');
+  }
+  db.exec(`
+    UPDATE run_items
+    SET newsletter_id = (
+      SELECT items.newsletter_id FROM items WHERE items.message_id = run_items.message_id
+    )
+    WHERE newsletter_id IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_run_items_newsletter_id ON run_items(newsletter_id);
+  `);
 
   const runCols = db.prepare('PRAGMA table_info(runs)').all() as TableInfoRow[];
   if (!runCols.some((c) => c.name === 'weather_json')) {
@@ -141,13 +185,13 @@ export function isKnown(db: Db, messageId: string): boolean {
 }
 
 export function insertItem(db: Db, item: DigestItem): boolean {
-  const { messageId, uid, sender, subject, date, cleanText, summary, link, isPaywalled } = item;
+  const { id, source, messageId, uid, sender, subject, date, cleanText, summary, link, isPaywalled } = item;
   const result = db
     .prepare(
-      `INSERT OR IGNORE INTO items (message_id, uid, sender, subject, date, clean_text, summary, link, is_paywalled, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      `INSERT OR IGNORE INTO items (message_id, newsletter_id, source_type, source_external_id, source_cursor, uid, sender, subject, date, clean_text, summary, link, is_paywalled, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
     )
-    .run(messageId, uid, sender, subject, date, cleanText, summary ?? null, link ?? null, isPaywalled ? 1 : 0);
+    .run(messageId, id, source.type, source.externalId, source.cursor, uid, sender, subject, date, cleanText, summary ?? null, link ?? null, isPaywalled ? 1 : 0);
   return result.changes === 1;
 }
 
@@ -184,6 +228,13 @@ function parseJson<T>(value: string | null): T | null {
 
 function rowToItem(row: ItemRow): DigestItem {
   return {
+    id: row.newsletter_id ?? `legacy:${row.message_id}`,
+    source: {
+      type: row.source_type ?? 'gmail',
+      externalId: row.source_external_id ?? row.message_id,
+      cursor: row.source_cursor ?? String(row.uid),
+      metadata: { gmailMessageId: row.message_id, gmailUid: row.uid },
+    },
     messageId: row.message_id,
     uid: row.uid,
     sender: row.sender,
@@ -213,7 +264,8 @@ export function addRunItems(db: Db, runId: number, messageIds: string[]): void {
   if (messageIds.length === 0) return;
 
   const insert = db.prepare(
-    'INSERT OR IGNORE INTO run_items (run_id, message_id) VALUES (?, ?)',
+    `INSERT OR IGNORE INTO run_items (run_id, message_id, newsletter_id)
+     SELECT ?, message_id, newsletter_id FROM items WHERE message_id = ?`,
   );
   const insertMany = db.transaction((ids: string[]) => {
     for (const messageId of ids) {

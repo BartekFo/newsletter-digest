@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import { loadConfig } from './config.js';
@@ -125,6 +126,13 @@ export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
       const cleanText = await extract(mail.html);
 
       const item: DigestItem = {
+        id: randomUUID(),
+        source: {
+          type: 'gmail',
+          externalId: mail.messageId,
+          cursor: String(uid),
+          metadata: { gmailMessageId: mail.messageId, gmailUid: uid },
+        },
         messageId: mail.messageId,
         uid,
         sender: mail.sender,

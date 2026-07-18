@@ -76,6 +76,56 @@ test('initSchema migrates legacy items table with is_paywalled column', () => {
   db.close();
 });
 
+test('initSchema expands an existing archive with stable newsletter and source identity', () => {
+  const db = openDb(':memory:');
+  db.exec(`
+    CREATE TABLE items (
+      message_id TEXT PRIMARY KEY,
+      uid INTEGER,
+      sender TEXT,
+      subject TEXT,
+      date TEXT,
+      clean_text TEXT,
+      summary TEXT,
+      link TEXT,
+      is_paywalled INTEGER DEFAULT 0,
+      created_at TEXT
+    );
+    CREATE TABLE runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ran_at TEXT,
+      fetched INTEGER,
+      new_items INTEGER,
+      duration_ms INTEGER,
+      ok INTEGER,
+      weather_json TEXT,
+      hackernews_json TEXT
+    );
+    CREATE TABLE run_items (
+      run_id INTEGER NOT NULL,
+      message_id TEXT NOT NULL,
+      PRIMARY KEY (run_id, message_id)
+    );
+    INSERT INTO items VALUES (
+      '<legacy@example.com>', 42, 'Legacy', 'Preserved',
+      '2026-07-01T08:00:00Z', 'Body', 'Summary', NULL, 0, datetime('now')
+    );
+    INSERT INTO runs VALUES (1, datetime('now'), 1, 1, 10, 1, NULL, NULL);
+    INSERT INTO run_items VALUES (1, '<legacy@example.com>');
+  `);
+
+  initSchema(db);
+
+  const item = getItemByMessageId(db, '<legacy@example.com>');
+  assert.ok(item);
+  assert.match(item.id, /^newsletter-/);
+  assert.equal(item.source.type, 'gmail');
+  assert.equal(item.source.externalId, '<legacy@example.com>');
+  assert.equal(item.messageId, '<legacy@example.com>', 'legacy identity remains available during expand');
+  assert.equal(getItemsByRunId(db, 1)[0]?.id, item.id, 'snapshot relation is backfilled');
+  db.close();
+});
+
 test('getLastUid returns null on fresh db', () => {
   const db = freshDb();
   assert.equal(getLastUid(db), null);

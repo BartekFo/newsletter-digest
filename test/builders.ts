@@ -37,9 +37,21 @@ export function buildAppConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 }
 
 export function buildDigestItem(overrides: Partial<DigestItem> = {}): DigestItem {
+  const messageId = overrides.messageId ?? '<test-1@example.com>';
+  const uid = overrides.uid ?? 101;
   return {
-    messageId: '<test-1@example.com>',
-    uid: 101,
+    id: overrides.id ?? `newsletter-test-${uid}`,
+    source: overrides.source ?? {
+      type: 'gmail',
+      externalId: messageId,
+      cursor: String(uid),
+      metadata: {
+        gmailMessageId: messageId,
+        gmailUid: uid,
+      },
+    },
+    messageId,
+    uid,
     sender: 'newsletter@example.com',
     subject: 'Weekly Digest',
     date: '2026-06-27T10:00:00Z',
