@@ -11,7 +11,7 @@ import {
   getRunSummaries,
   isKnown,
 } from '../src/store.js';
-import { renderHtml } from '../src/render.js';
+import { renderDigestPage } from '../src/render.js';
 import { runDigest, type DigestDeps } from '../src/digest.js';
 import type { DigestEmailMessage } from '../src/email.js';
 import type { Db } from '../src/types.js';
@@ -101,7 +101,7 @@ function makeDeps(db: Db, overrides: Partial<DigestDeps> = {}): TestDigestDeps {
         hnUrl: 'https://news.ycombinator.com/item?id=1',
       },
     ],
-    renderHtml,
+    renderHtml: renderDigestPage,
     buildDigestEmail: (items, meta) => ({
       subject: `Digest: ${items.length}`,
       html: `<p>${meta.newCount}</p>`,

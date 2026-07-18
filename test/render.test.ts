@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderHtml, renderRunsPage } from '../src/render.js';
+import { renderDigestPage, renderRunsPage } from '../src/render.js';
 import type {
   DigestItem,
   DigestMeta,
@@ -32,6 +32,7 @@ const ITEM_B = buildDigestItem({
 });
 
 const META: DigestMeta = { ranAt: '2024-03-01T08:00:00.000Z', newCount: 2 };
+const renderHtml = renderDigestPage;
 
 function renderUnknownItems(items: unknown, meta: DigestMeta = META): string {
   return renderHtml(items as DigestItem[], meta);
@@ -322,4 +323,16 @@ test('digest and runs pages support a persistent dark theme', () => {
     assert.ok(html.includes('id="theme-toggle"'), 'theme toggle missing');
     assert.ok(html.includes('aria-pressed="false"'), 'theme toggle state missing');
   }
+});
+
+test('digest and history share the same reader navigation shell', () => {
+  const pages = [renderDigestPage([ITEM_A], META), renderRunsPage([])];
+  const navigation = /<nav class="top-nav"[\s\S]*?<\/nav>/;
+  const digestNav = pages[0]?.match(navigation)?.[0];
+  const historyNav = pages[1]?.match(navigation)?.[0];
+
+  assert.ok(digestNav);
+  assert.equal(historyNav, digestNav);
+  assert.ok(digestNav.includes('href="/runs"'));
+  assert.ok(digestNav.includes('action="/refresh"'));
 });

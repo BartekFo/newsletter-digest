@@ -7,7 +7,7 @@ import { extractText } from './extract.js';
 import { fetchTopStories } from './hackernews.js';
 import { fetchNewMessages } from './imap.js';
 import { parseMail } from './parse.js';
-import { renderHtml } from './render.js';
+import { renderDigestPage } from './render.js';
 import { openDigestArchive, type DigestArchive } from './store.js';
 import { summarize } from './summarize.js';
 import { fetchWeather } from './weather.js';
@@ -61,7 +61,7 @@ export function createApplication(
   };
 
   if (options.staticExport) {
-    refreshDeps.renderHtml = renderHtml;
+    refreshDeps.renderHtml = renderDigestPage;
     refreshDeps.writeFile = (path, content) => writeFile(path, content, 'utf8');
     if (options.openStaticExport) refreshDeps.openFile = openFile;
   }

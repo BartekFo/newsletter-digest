@@ -141,6 +141,101 @@ const THEME_TOGGLE_SCRIPT = `<script>
 })();
 </script>`;
 
+const DOCUMENT_CSS = `
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.6;
+    font-size: 17px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .page { max-width: 720px; margin: 0 auto; padding: 0 20px 72px; }
+  header.masthead { padding: 56px 0 28px; border-bottom: 2px solid var(--ink); margin-bottom: 4px; }
+  .masthead h1 {
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: clamp(34px, 8vw, 48px);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    margin: 0;
+  }
+  .masthead .meta { margin-top: 12px; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .masthead .meta .count { color: var(--ink); font-weight: 600; }
+  .top-nav { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+  .top-nav a, .top-nav button, .chat-button {
+    appearance: none;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--ink);
+    cursor: pointer;
+    font: 700 13px/1 var(--sans);
+    min-height: 36px;
+    padding: 0 13px;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .top-nav a:hover, .top-nav button:hover, .chat-button:hover { border-color: var(--link); color: var(--link); }
+  .top-nav form { margin: 0; }
+  .notice { margin-top: 18px; padding: 12px 14px; background: var(--notice-bg); border: 1px solid var(--notice-border); border-radius: 8px; color: var(--notice-ink); font-size: 14px; }
+  .notice.error { background: var(--error-bg); border-color: var(--error-border); color: var(--error-ink); }
+  .empty-list { text-align: center; padding: 56px 20px; color: var(--muted); font-family: var(--serif); font-size: 19px; font-style: italic; background: var(--surface); border: 1px dashed var(--line-strong); border-radius: 14px; }
+  @media (max-width: 540px) {
+    body { font-size: 16px; }
+    .page { padding: 0 16px 56px; }
+    header.masthead { padding: 36px 0 22px; }
+  }
+`;
+
+interface ReaderDocument {
+  title: string;
+  styles: string;
+  pageHtml: string;
+  afterPage?: string;
+  scripts?: string;
+}
+
+function renderNavigation(): string {
+  return `<nav class="top-nav" aria-label="Nawigacja">
+      <a href="/">Najnowszy</a>
+      <a href="/runs">Historia</a>
+      <form method="post" action="/refresh"><button type="submit">Pobierz nowe</button></form>
+      ${renderThemeToggle()}
+    </nav>`;
+}
+
+function renderReaderDocument(document: ReaderDocument): string {
+  return `<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(document.title)}</title>
+${THEME_BOOT_SCRIPT}
+<style>
+${THEME_CSS}
+${DOCUMENT_CSS}
+${document.styles}
+</style>
+</head>
+<body>
+<div class="page">
+${document.pageHtml}
+</div>
+${document.afterPage ?? ''}
+${document.scripts ?? ''}
+${THEME_TOGGLE_SCRIPT}
+</body>
+</html>`;
+}
+
 function formatDate(iso: string): string {
   try {
     return new Date(iso).toLocaleString('pl-PL', { timeZone: 'Europe/Warsaw' });
@@ -246,7 +341,7 @@ ${list}
  * @param {{ranAt: string, newCount: number, weather?: object|null, hackernews?: object[]|null}} meta
  * @returns {string} Full HTML document
  */
-export function renderHtml(items: DigestItem[], meta: DigestMeta): string {
+export function renderDigestPage(items: DigestItem[], meta: DigestMeta): string {
   const sorted = [...items].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   const ranAtFormatted = formatDate(meta.ranAt);
@@ -293,111 +388,9 @@ ${sorted.map(item => {
       }).join('\n')}
     </div>`;
 
-  return `<!DOCTYPE html>
-<html lang="pl">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Newsletter Digest</title>
-${THEME_BOOT_SCRIPT}
-<style>
-${THEME_CSS}
-
-  * { box-sizing: border-box; }
-
-  html { -webkit-text-size-adjust: 100%; }
-
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--ink);
-    font-family: var(--sans);
-    line-height: 1.6;
-    font-size: 17px;
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
-  }
-
-  .page {
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 0 20px 72px;
-  }
-
-  /* ---------- HEADER ---------- */
-  header.masthead {
-    padding: 56px 0 28px;
-    border-bottom: 2px solid var(--ink);
-    margin-bottom: 4px;
-  }
-
-  .masthead h1 {
-    font-family: var(--serif);
-    font-weight: 700;
-    font-size: clamp(34px, 8vw, 48px);
-    line-height: 1.05;
-    letter-spacing: -0.02em;
-    margin: 0;
-  }
-
-  .masthead .meta {
-    margin-top: 12px;
-    font-size: 13px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--muted);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .masthead .meta .count {
-    color: var(--ink);
-    font-weight: 600;
-  }
-
-  .top-nav {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 22px;
-  }
-  .top-nav a,
-  .top-nav button,
-  .chat-button {
-    appearance: none;
-    border: 1px solid var(--line-strong);
-    border-radius: 8px;
-    background: var(--surface);
-    color: var(--ink);
-    cursor: pointer;
-    font: 700 13px/1 var(--sans);
-    min-height: 36px;
-    padding: 0 13px;
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .top-nav a:hover,
-  .top-nav button:hover,
-  .chat-button:hover {
-    border-color: var(--link);
-    color: var(--link);
-  }
-  .top-nav form { margin: 0; }
-  .notice {
-    margin-top: 18px;
-    padding: 12px 14px;
-    background: var(--notice-bg);
-    border: 1px solid var(--notice-border);
-    border-radius: 8px;
-    color: var(--notice-ink);
-    font-size: 14px;
-  }
-  .notice.error {
-    background: var(--error-bg);
-    border-color: var(--error-border);
-    color: var(--error-ink);
-  }
+  return renderReaderDocument({
+    title: 'Newsletter Digest',
+    styles: `
 
   /* ---------- WEATHER ---------- */
   .weather {
@@ -551,18 +544,7 @@ ${THEME_CSS}
   }
 
   /* ---------- EMPTY LIST ---------- */
-  .empty-list {
-    text-align: center;
-    padding: 56px 20px;
-    color: var(--muted);
-    font-family: var(--serif);
-    font-size: 19px;
-    font-style: italic;
-    background: var(--surface);
-    border: 1px dashed var(--line-strong);
-    border-radius: 14px;
-    margin-top: 18px;
-  }
+  .empty-list { margin-top: 18px; }
 
   /* ---------- HACKERNEWS ---------- */
   .hn-section { margin-top: 48px; }
@@ -767,9 +749,6 @@ ${THEME_CSS}
 
   /* ---------- MOBILE ---------- */
   @media (max-width: 540px) {
-    body { font-size: 16px; }
-    .page { padding: 0 16px 56px; }
-    header.masthead { padding: 36px 0 22px; }
     .card { padding: 20px; border-radius: 12px; }
     .card .subject { font-size: 20px; }
     ol.hn-list li { padding: 14px 16px; gap: 12px; }
@@ -778,20 +757,13 @@ ${THEME_CSS}
     .chat-form { flex-direction: column; }
     .chat-form button { min-height: 42px; }
   }
-</style>
-</head>
-<body>
-<div class="page">
+`,
+    pageHtml: `
 
   <header class="masthead">
     <h1>Newsletter Digest</h1>
     <div class="meta">Wygenerowano: ${escapeHtml(ranAtFormatted)} &nbsp;—&nbsp; Nowych: <span class="count">${escapeHtml(String(meta.newCount))}</span></div>${renderWeather(meta.weather)}
-    <nav class="top-nav" aria-label="Nawigacja">
-      <a href="/">Najnowszy</a>
-      <a href="/runs">Historia</a>
-      <form method="post" action="/refresh"><button type="submit">Pobierz nowe</button></form>
-      ${renderThemeToggle()}
-    </nav>
+    ${renderNavigation()}
     ${renderNotice(meta)}
   </header>
 
@@ -807,8 +779,8 @@ ${renderHackerNews(meta.hackernews)}
     Newsletter Digest · wygenerowano lokalnie · ${escapeHtml(formatDay(meta.ranAt))}
   </footer>
 
-</div>
-<section class="chat-panel" id="chat-panel" hidden>
+`,
+    afterPage: `<section class="chat-panel" id="chat-panel" hidden>
   <div class="chat-box" role="dialog" aria-modal="true" aria-labelledby="chat-title">
     <div class="chat-head">
       <div class="chat-title" id="chat-title">Chat</div>
@@ -820,8 +792,8 @@ ${renderHackerNews(meta.hackernews)}
       <button type="submit">Wyślij</button>
     </form>
   </div>
-</section>
-<script>
+</section>`,
+    scripts: `<script>
 (() => {
   const panel = document.getElementById('chat-panel');
   const title = document.getElementById('chat-title');
@@ -910,14 +882,8 @@ ${renderHackerNews(meta.hackernews)}
     }
   });
 })();
-</script>
-${THEME_TOGGLE_SCRIPT}
-</body>
-</html>`;
-}
-
-export function renderDigestPage(items: DigestItem[], meta: DigestMeta): string {
-  return renderHtml(items, meta);
+</script>`,
+  });
 }
 
 export function renderRunsPage(runs: RunSummary[], meta: { ranAt: string; notice?: string; error?: string } = { ranAt: new Date().toISOString() }): string {
@@ -932,53 +898,10 @@ ${runs.map((run) => `
       </li>`).join('\n')}
     </ol>`;
 
-  return `<!DOCTYPE html>
-<html lang="pl">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Historia digestów</title>
-${THEME_BOOT_SCRIPT}
-<style>
-${THEME_CSS}
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--ink);
-    font-family: var(--sans);
-    line-height: 1.6;
-    font-size: 17px;
-  }
-  .page { max-width: 720px; margin: 0 auto; padding: 0 20px 72px; }
-  header { padding: 56px 0 28px; border-bottom: 2px solid var(--ink); margin-bottom: 28px; }
-  h1 { font-family: var(--serif); font-size: clamp(34px, 8vw, 48px); line-height: 1.05; margin: 0; }
-  nav { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
-  nav a, nav button {
-    border: 1px solid var(--line-strong);
-    border-radius: 8px;
-    background: var(--surface);
-    color: var(--ink);
-    cursor: pointer;
-    font: 700 13px/1 var(--sans);
-    min-height: 36px;
-    padding: 0 13px;
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
-  }
-  nav form { margin: 0; }
-  nav a:hover, nav button:hover { border-color: var(--link); color: var(--link); }
-  .notice {
-    margin-top: 18px;
-    padding: 12px 14px;
-    background: var(--notice-bg);
-    border: 1px solid var(--notice-border);
-    border-radius: 8px;
-    color: var(--notice-ink);
-    font-size: 14px;
-  }
-  .notice.error { background: var(--error-bg); border-color: var(--error-border); color: var(--error-ink); }
+  return renderReaderDocument({
+    title: 'Historia digestów',
+    styles: `
+  .history-masthead { margin-bottom: 28px; }
   .runs-list {
     list-style: none;
     padding: 0;
@@ -1000,37 +923,18 @@ ${THEME_CSS}
   .runs-list a { color: var(--link); font-weight: 700; text-decoration: none; }
   .runs-list span { color: var(--muted); font-size: 14px; }
   .runs-list strong { font-size: 14px; }
-  .empty-list {
-    text-align: center;
-    padding: 56px 20px;
-    color: var(--muted);
-    font-family: var(--serif);
-    font-size: 19px;
-    font-style: italic;
-    background: var(--surface);
-    border: 1px dashed var(--line-strong);
-    border-radius: 8px;
-  }
   @media (max-width: 640px) {
     .runs-list li { grid-template-columns: 1fr; gap: 4px; }
   }
-</style>
-</head>
-<body>
-<div class="page">
-  <header>
+`,
+    pageHtml: `
+  <header class="masthead history-masthead">
     <h1>Historia digestów</h1>
-    <nav aria-label="Nawigacja">
-      <a href="/">Najnowszy</a>
-      <form method="post" action="/refresh"><button type="submit">Pobierz nowe</button></form>
-      ${renderThemeToggle()}
-    </nav>
+    ${renderNavigation()}
     ${meta.error ? `<div class="notice error">${escapeHtml(meta.error)}</div>` : ''}
     ${meta.notice ? `<div class="notice">${escapeHtml(meta.notice)}</div>` : ''}
   </header>
   <main>${rows}</main>
-</div>
-${THEME_TOGGLE_SCRIPT}
-</body>
-</html>`;
+`,
+  });
 }
