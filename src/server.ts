@@ -295,8 +295,6 @@ if (isMain) {
 
     const logger = createLogger(config.logLevel);
     const application = createApplication(config, logger);
-    const { db } = application;
-
     const port = Number(process.env.PORT ?? '3789');
     const skipRefresh = shouldSkipStartupRefresh();
     const server = createReaderServer(application);
@@ -320,7 +318,7 @@ if (isMain) {
 
     process.on('SIGINT', () => {
       server.close(() => {
-        db.close();
+        application.close();
         process.exit(0);
       });
     });

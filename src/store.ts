@@ -52,10 +52,15 @@ export interface DigestSnapshot {
 }
 
 export interface DigestArchive {
+  getCursor(): number | null;
+  isKnown(messageId: string): boolean;
+  publishSnapshot(publication: SnapshotPublication): number;
+  recordFailedRefresh(run: RunRecord): void;
   latestSnapshot(): DigestSnapshot | null;
   listSnapshots(): RunSummary[];
   getSnapshot(runId: number): DigestSnapshot | null;
   getNewsletter(messageId: string): DigestItem | null;
+  close(): void;
 }
 
 export function openDb(path: string): Db {
@@ -300,6 +305,10 @@ export function createDigestArchive(db: Db): DigestArchive {
   };
 
   return {
+    getCursor: () => getLastUid(db),
+    isKnown: (messageId) => isKnown(db, messageId),
+    publishSnapshot: (publication) => publishSnapshot(db, publication),
+    recordFailedRefresh: (run) => { recordRun(db, { ...run, ok: false }); },
     latestSnapshot() {
       const run = getLatestNonEmptyRun(db);
       return run ? { run, items: getItemsByRunId(db, run.id) } : null;
@@ -307,5 +316,13 @@ export function createDigestArchive(db: Db): DigestArchive {
     listSnapshots: () => getRunSummaries(db),
     getSnapshot,
     getNewsletter: (messageId) => getItemByMessageId(db, messageId),
+    close: () => db.close(),
   };
+}
+
+/** Open, migrate and own a SQLite-backed archive without exposing its handle. */
+export function openDigestArchive(path: string): DigestArchive {
+  const db = openDb(path);
+  initSchema(db);
+  return createDigestArchive(db);
 }

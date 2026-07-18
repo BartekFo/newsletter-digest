@@ -5,17 +5,10 @@ import { createLogger, silentLogger } from './logger.js';
 import {
   type DigestEmailMessage,
 } from './email.js';
-import {
-  getLastUid,
-  isKnown,
-  recordRun,
-  publishSnapshot,
-  getItemsByRunId,
-} from './store.js';
+import type { DigestArchive } from './store.js';
 import type {
   AppConfig,
   AppLogger,
-  Db,
   DigestItem,
   DigestMeta,
   FetchedMessage,
@@ -29,7 +22,7 @@ function errorMessage(err: unknown): string {
 }
 
 export interface DigestDeps {
-  db: Db;
+  archive: DigestArchive;
   config: AppConfig;
   fetchNewMessages(config: AppConfig, lastUid: number | null): Promise<FetchedMessage[]>;
   parseMail(raw: Buffer): Promise<ParsedMail>;
@@ -65,7 +58,7 @@ export function createNewsletterRefresh(deps: DigestDeps): NewsletterRefresh {
  * Core orchestration function — fully injectable for offline testing.
  *
  * deps shape:
- *   db            — better-sqlite3 db handle (schema already initialised)
+ *   archive       — publication, recovery and read interface
  *   config        — { gmailUser, gmailAppPassword, imapFolder, bootstrapDays,
  *                     ollamaModel, dbPath, outPath }
  *   fetchNewMessages(config, lastUid) → Promise<{raw, uid}[]>
@@ -84,7 +77,7 @@ export function createNewsletterRefresh(deps: DigestDeps): NewsletterRefresh {
  */
 export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
   const {
-    db,
+    archive,
     config,
     fetchNewMessages: fetch,
     parseMail: parse,
@@ -102,7 +95,7 @@ export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
   } = deps;
 
   const startMs = Date.now();
-  const lastUid = getLastUid(db);
+  const lastUid = archive.getCursor();
 
   let fetched: FetchedMessage[] | undefined;
   let newUids: number[] = [];
@@ -124,7 +117,7 @@ export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
       // we don't re-fetch them on the next run (dedup is handled by isKnown).
       maxUid = Math.max(maxUid, uid);
 
-      if (isKnown(db, mail.messageId) || stagedMessageIds.has(mail.messageId)) {
+      if (archive.isKnown(mail.messageId) || stagedMessageIds.has(mail.messageId)) {
         logger.debug({ uid, subject: mail.subject }, 'Pomijam — już znana');
         continue;
       }
@@ -200,7 +193,7 @@ export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
       hackernews,
     };
     const durationMs = Date.now() - startMs;
-    const runId = publishSnapshot(db, {
+    const runId = archive.publishSnapshot({
       items,
       cursorUid: maxUid,
       run: {
@@ -215,7 +208,9 @@ export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
 
     // Delivery consumes the committed snapshot, never the in-flight staging
     // collection. A delivery failure cannot invalidate publication.
-    const publishedItems = getItemsByRunId(db, runId);
+    const publishedSnapshot = archive.getSnapshot(runId);
+    if (!publishedSnapshot) throw new Error(`Published snapshot #${runId} is not readable.`);
+    const publishedItems = publishedSnapshot.items;
     if (render && writeFile) try {
       const html = render(publishedItems, digestMeta);
       await writeFile(config.outPath, html);
@@ -252,11 +247,11 @@ export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
       { err: errorMessage(err), durationMs: Date.now() - startMs },
       'Bieg nieudany',
     );
-    recordRun(db, {
+    archive.recordFailedRefresh({
       fetched: fetched?.length ?? 0,
       newItems: newUids?.length ?? 0,
       durationMs: Date.now() - startMs,
-      ok: 0,
+      ok: false,
     });
     throw err;
   }
@@ -292,7 +287,7 @@ if (isMain) {
       // runDigest already logged the failure; just set the exit code.
       process.exitCode = 1;
     } finally {
-      application.db.close();
+      application.close();
     }
   })();
 }

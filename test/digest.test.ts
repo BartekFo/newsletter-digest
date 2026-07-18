@@ -2,6 +2,7 @@ import { describe, it, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  createDigestArchive,
   openDb,
   initSchema,
   getLastUid,
@@ -65,7 +66,7 @@ function makeDeps(db: Db, overrides: Partial<DigestDeps> = {}): TestDigestDeps {
   let sendEmailCalls = 0;
 
   const deps: TestDigestDeps = {
-    db,
+    archive: createDigestArchive(db),
     config: buildAppConfig(),
     fetchNewMessages: async () => FAKE_MAILS.map((mail) => mail.message),
     parseMail: async (raw) => {
