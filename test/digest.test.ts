@@ -333,6 +333,24 @@ describe('runDigest', () => {
     assert.equal(run.ok, 1);
   });
 
+  it('keeps the published snapshot and continues email delivery when static export fails', async () => {
+    const deps = makeDeps(db, {
+      writeFile: async () => {
+        throw new Error('disk unavailable');
+      },
+    });
+    deps.config.sendDigestEmail = true;
+
+    const result = await runDigest(deps);
+
+    assert.ok(result.runId !== null);
+    assert.equal(getItemsByRunId(db, result.runId).length, 2);
+    assert.equal(deps._sendEmailCalls(), 1, 'email delivery should be independent from export');
+    assert.equal(deps._openFileCalled(), false, 'a missing export must not be opened');
+    const run = db.prepare('SELECT ok FROM runs WHERE id = ?').get(result.runId) as { ok: number };
+    assert.equal(run.ok, 1);
+  });
+
   it('does not email when delivery is disabled', async () => {
     const deps = makeDeps(db);
 

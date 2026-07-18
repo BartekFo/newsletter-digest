@@ -23,6 +23,7 @@ import {
   isKnown,
   recordRun,
   publishSnapshot,
+  getItemsByRunId,
 } from './store.js';
 import type {
   AppConfig,
@@ -208,8 +209,6 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
       weather,
       hackernews,
     };
-    const html = render(items, digestMeta);
-
     const durationMs = Date.now() - startMs;
     const runId = publishSnapshot(db, {
       items,
@@ -224,12 +223,24 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
       },
     });
 
-    await writeFile(config.outPath, html);
-    logger.info({ outPath: config.outPath, runId }, 'Zapisano digest');
+    // Delivery consumes the committed snapshot, never the in-flight staging
+    // collection. A delivery failure cannot invalidate publication.
+    const publishedItems = getItemsByRunId(db, runId);
+    try {
+      const html = render(publishedItems, digestMeta);
+      await writeFile(config.outPath, html);
+      logger.info({ outPath: config.outPath, runId }, 'Zapisano digest');
+      await open(config.outPath);
+    } catch (err) {
+      logger.error(
+        { outPath: config.outPath, runId, err: errorMessage(err) },
+        'Nie udało się wyeksportować digestu — opublikowany snapshot pozostaje dostępny',
+      );
+    }
 
     if (config.sendDigestEmail) {
       try {
-        const email = buildEmail(items, digestMeta);
+        const email = buildEmail(publishedItems, digestMeta);
         await sendEmail(config, email);
         logger.info({ recipient: config.digestEmailRecipient, runId }, 'Wysłano digest e-mailem');
       } catch (err) {
@@ -239,8 +250,6 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
         );
       }
     }
-
-    await open(config.outPath);
 
     logger.info(
       { fetched: fetched.length, newItems: newUids.length, durationMs },
