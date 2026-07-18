@@ -20,13 +20,9 @@ import {
   openDb,
   initSchema,
   getLastUid,
-  setLastUid,
   isKnown,
-  insertItem,
-  setSummary,
   recordRun,
-  addRunItems,
-  getItemsByUids,
+  publishSnapshot,
 } from './store.js';
 import type {
   AppConfig,
@@ -119,7 +115,8 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
 
   let fetched: FetchedMessage[] | undefined;
   let newUids: number[] = [];
-  const newMessageIds: string[] = [];
+  const stagedItems: DigestItem[] = [];
+  const stagedMessageIds = new Set<string>();
 
   try {
     logger.info({ lastUid, folder: config.imapFolder }, 'Łączę z Gmail, pobieram nowe wiadomości…');
@@ -136,14 +133,14 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
       // we don't re-fetch them on the next run (dedup is handled by isKnown).
       maxUid = Math.max(maxUid, uid);
 
-      if (isKnown(db, mail.messageId)) {
+      if (isKnown(db, mail.messageId) || stagedMessageIds.has(mail.messageId)) {
         logger.debug({ uid, subject: mail.subject }, 'Pomijam — już znana');
         continue;
       }
 
       const cleanText = await extract(mail.html);
 
-      insertItem(db, {
+      const item: DigestItem = {
         messageId: mail.messageId,
         uid,
         sender: mail.sender,
@@ -153,7 +150,7 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
         summary: null,
         link: mail.link ?? null,
         isPaywalled: mail.isPaywalled,
-      });
+      };
 
       logger.info(
         { uid, sender: mail.sender, subject: mail.subject, model: config.ollamaModel },
@@ -164,8 +161,7 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
       try {
         const summary = await summariseFn(cleanText, config.ollamaModel);
 
-        // Commit summary immediately (commit-per-mail resilience).
-        setSummary(db, mail.messageId, summary);
+        item.summary = summary;
         logger.info(
           { uid, subject: mail.subject, ms: Date.now() - summaryStartMs },
           'Streszczono',
@@ -181,12 +177,8 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
       }
 
       newUids.push(uid);
-      newMessageIds.push(mail.messageId);
-    }
-
-    // Advance cursor only after the full loop completes without throwing.
-    if (maxUid > (lastUid ?? 0)) {
-      setLastUid(db, maxUid);
+      stagedItems.push(item);
+      stagedMessageIds.add(mail.messageId);
     }
 
     if (newUids.length === 0) {
@@ -199,7 +191,7 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
     }
 
     logger.info({ newItems: newUids.length }, 'Przetworzono maile, pobieram pogodę i HackerNews…');
-    const items = getItemsByUids(db, newUids);
+    const items = stagedItems;
 
     // Optional extras — failure-safe: a dead API must not abort the digest.
     // Each fn logs its own failure via the injected logger and returns null;
@@ -218,19 +210,22 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
     };
     const html = render(items, digestMeta);
 
-    await writeFile(config.outPath, html);
-    logger.info({ outPath: config.outPath }, 'Zapisano digest');
-
     const durationMs = Date.now() - startMs;
-    const runId = recordRun(db, {
-      fetched: fetched.length,
-      newItems: newUids.length,
-      durationMs,
-      ok: 1,
-      weather,
-      hackernews,
+    const runId = publishSnapshot(db, {
+      items,
+      cursorUid: maxUid,
+      run: {
+        fetched: fetched.length,
+        newItems: newUids.length,
+        durationMs,
+        ok: 1,
+        weather,
+        hackernews,
+      },
     });
-    addRunItems(db, runId, newMessageIds);
+
+    await writeFile(config.outPath, html);
+    logger.info({ outPath: config.outPath, runId }, 'Zapisano digest');
 
     if (config.sendDigestEmail) {
       try {
@@ -252,7 +247,7 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
       'Gotowe',
     );
 
-    return { fetched: fetched.length, newItems: newUids.length, runId: newMessageIds.length > 0 ? runId : null };
+    return { fetched: fetched.length, newItems: newUids.length, runId };
   } catch (err) {
     logger.error(
       { err: errorMessage(err), durationMs: Date.now() - startMs },

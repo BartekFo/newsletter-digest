@@ -40,6 +40,12 @@ export interface RunRecord {
   hackernews?: HackerNewsStory[] | null;
 }
 
+export interface SnapshotPublication {
+  items: DigestItem[];
+  cursorUid: number;
+  run: RunRecord;
+}
+
 export function openDb(path: string): Db {
   return new Database(path);
 }
@@ -199,6 +205,26 @@ export function addRunItems(db: Db, runId: number, messageIds: string[]): void {
   });
 
   insertMany(messageIds);
+}
+
+/**
+ * Make a completed refresh visible as one recoverable SQLite state.
+ * Items, the run, snapshot relations and the IMAP cursor either all commit or
+ * all roll back together.
+ */
+export function publishSnapshot(db: Db, publication: SnapshotPublication): number {
+  const publish = db.transaction(({ items, cursorUid, run }: SnapshotPublication) => {
+    for (const item of items) {
+      insertItem(db, item);
+    }
+
+    const runId = recordRun(db, run);
+    addRunItems(db, runId, items.map((item) => item.messageId));
+    setLastUid(db, cursorUid);
+    return runId;
+  });
+
+  return publish(publication);
 }
 
 function rowToRunSummary(row: RunSummaryRow): RunSummary {

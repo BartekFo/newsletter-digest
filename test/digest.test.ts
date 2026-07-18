@@ -1,7 +1,15 @@
 import { describe, it, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { openDb, initSchema, getLastUid, getItemsByRunId, getItemsByUids, isKnown } from '../src/store.js';
+import {
+  openDb,
+  initSchema,
+  getLastUid,
+  getItemsByRunId,
+  getItemsByUids,
+  getRunSummaries,
+  isKnown,
+} from '../src/store.js';
 import { renderHtml } from '../src/render.js';
 import { runDigest, type DigestDeps } from '../src/digest.js';
 import type { DigestEmailMessage } from '../src/email.js';
@@ -140,7 +148,7 @@ describe('runDigest', () => {
     assert.deepEqual(result, { fetched: 2, newItems: 2, runId: 1 });
   });
 
-  it('inserts both items in db with summaries set (commit-per-mail)', async () => {
+  it('publishes both items in db with summaries set', async () => {
     const deps = makeDeps(db);
     await runDigest(deps);
 
@@ -256,6 +264,36 @@ describe('runDigest', () => {
     const items = getItemsByRunId(db, runId);
     assert.equal(items.length, 2);
     assert.deepEqual(items.map((item) => item.messageId).sort(), ['msg-001@test', 'msg-002@test']);
+  });
+
+  it('recovers every newsletter after snapshot publication fails atomically', async () => {
+    db.exec(`
+      CREATE TRIGGER fail_snapshot_publication
+      BEFORE INSERT ON run_items
+      BEGIN
+        SELECT RAISE(ABORT, 'simulated publication failure');
+      END;
+    `);
+
+    await assert.rejects(
+      runDigest(makeDeps(db)),
+      /simulated publication failure/,
+    );
+
+    assert.equal(getLastUid(db), null, 'cursor must remain at the last recoverable snapshot');
+    assert.equal(getItemsByUids(db, [101, 102]).length, 0, 'unpublished items must roll back');
+    assert.deepEqual(getRunSummaries(db), [], 'failed publication must not become visible');
+
+    db.exec('DROP TRIGGER fail_snapshot_publication');
+    const recovered = await runDigest(makeDeps(db));
+
+    assert.equal(recovered.newItems, 2);
+    assert.ok(recovered.runId !== null);
+    assert.equal(getLastUid(db), 102);
+    assert.deepEqual(
+      getItemsByRunId(db, recovered.runId).map((item) => item.messageId).sort(),
+      ['msg-001@test', 'msg-002@test'],
+    );
   });
 
   it('openFile is called after success', async () => {
