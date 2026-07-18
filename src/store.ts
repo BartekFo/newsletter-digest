@@ -46,6 +46,18 @@ export interface SnapshotPublication {
   run: RunRecord;
 }
 
+export interface DigestSnapshot {
+  run: RunSummary;
+  items: DigestItem[];
+}
+
+export interface DigestArchive {
+  latestSnapshot(): DigestSnapshot | null;
+  listSnapshots(): RunSummary[];
+  getSnapshot(runId: number): DigestSnapshot | null;
+  getNewsletter(messageId: string): DigestItem | null;
+}
+
 export function openDb(path: string): Db {
   return new Database(path);
 }
@@ -278,4 +290,22 @@ export function getItemsByRunId(db: Db, runId: number): DigestItem[] {
     )
     .all(runId) as ItemRow[];
   return rows.map(rowToItem);
+}
+
+/** Reader-facing archive interface. SQLite and query composition stay here. */
+export function createDigestArchive(db: Db): DigestArchive {
+  const getSnapshot = (runId: number): DigestSnapshot | null => {
+    const run = getRunSummaries(db).find((candidate) => candidate.id === runId);
+    return run ? { run, items: getItemsByRunId(db, runId) } : null;
+  };
+
+  return {
+    latestSnapshot() {
+      const run = getLatestNonEmptyRun(db);
+      return run ? { run, items: getItemsByRunId(db, run.id) } : null;
+    },
+    listSnapshots: () => getRunSummaries(db),
+    getSnapshot,
+    getNewsletter: (messageId) => getItemByMessageId(db, messageId),
+  };
 }

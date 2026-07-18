@@ -9,12 +9,10 @@ import { createApplication } from './composition.js';
 import { createLogger, silentLogger } from './logger.js';
 import { renderDigestPage, renderRunsPage } from './render.js';
 import {
-  getItemByMessageId,
-  getItemsByRunId,
-  getLatestNonEmptyRun,
-  getRunSummaries,
+  type DigestArchive,
+  type DigestSnapshot,
 } from './store.js';
-import type { AppConfig, AppLogger, Db, DigestItem, RunSummary } from './types.js';
+import type { AppConfig, AppLogger, DigestItem } from './types.js';
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -108,7 +106,7 @@ function isChatHistory(value: unknown): value is ChatMessage[] {
 }
 
 export interface ReaderServerDeps {
-  db: Db;
+  archive: DigestArchive;
   config: AppConfig;
   logger?: AppLogger;
   refresh?: NewsletterRefresh;
@@ -116,15 +114,14 @@ export interface ReaderServerDeps {
   chatTimeoutMs?: number;
 }
 
-function renderRun(db: Db, run: RunSummary, config: AppConfig, extras: { notice?: string; error?: string } = {}): string {
-  const items = getItemsByRunId(db, run.id);
-  return renderDigestPage(items, {
-    ranAt: run.ranAt,
-    newCount: run.newItems,
-    runId: run.id,
+function renderSnapshot(snapshot: DigestSnapshot, config: AppConfig, extras: { notice?: string; error?: string } = {}): string {
+  return renderDigestPage(snapshot.items, {
+    ranAt: snapshot.run.ranAt,
+    newCount: snapshot.run.newItems,
+    runId: snapshot.run.id,
     gmailUser: config.gmailUser,
-    ...(run.weather !== undefined ? { weather: run.weather } : {}),
-    ...(run.hackernews !== undefined ? { hackernews: run.hackernews } : {}),
+    ...(snapshot.run.weather !== undefined ? { weather: snapshot.run.weather } : {}),
+    ...(snapshot.run.hackernews !== undefined ? { hackernews: snapshot.run.hackernews } : {}),
     ...extras,
   });
 }
@@ -150,30 +147,30 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
       const url = new URL(req.url ?? '/', `http://${host}`);
 
       if (req.method === 'GET' && url.pathname === '/') {
-        const run = getLatestNonEmptyRun(deps.db);
+        const snapshot = deps.archive.latestSnapshot();
         const meta = noticeFromUrl(url);
-        sendHtml(res, 200, run ? renderRun(deps.db, run, deps.config, meta) : renderEmpty(deps.config, meta));
+        sendHtml(res, 200, snapshot ? renderSnapshot(snapshot, deps.config, meta) : renderEmpty(deps.config, meta));
         return;
       }
 
       if (req.method === 'GET' && url.pathname === '/runs') {
-        sendHtml(res, 200, renderRunsPage(getRunSummaries(deps.db), { ranAt: currentIso(), ...noticeFromUrl(url) }));
+        sendHtml(res, 200, renderRunsPage(deps.archive.listSnapshots(), { ranAt: currentIso(), ...noticeFromUrl(url) }));
         return;
       }
 
       const runMatch = url.pathname.match(/^\/runs\/(\d+)$/);
       if (req.method === 'GET' && runMatch?.[1]) {
         const runId = Number(runMatch[1]);
-        const run = getRunSummaries(deps.db).find((summary) => summary.id === runId);
-        if (!run) {
-          sendHtml(res, 404, renderRunsPage(getRunSummaries(deps.db), {
+        const snapshot = deps.archive.getSnapshot(runId);
+        if (!snapshot) {
+          sendHtml(res, 404, renderRunsPage(deps.archive.listSnapshots(), {
             ranAt: currentIso(),
             error: `Nie znaleziono digestu #${runId}.`,
           }));
           return;
         }
 
-        sendHtml(res, 200, renderRun(deps.db, run, deps.config, noticeFromUrl(url)));
+        sendHtml(res, 200, renderSnapshot(snapshot, deps.config, noticeFromUrl(url)));
         return;
       }
 
@@ -186,8 +183,8 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
             return;
           }
 
-          const latest = getLatestNonEmptyRun(deps.db);
-          redirect(res, `${latest ? `/runs/${latest.id}` : '/'}?notice=${encodeURIComponent('Brak nowych newsletterów.')}`);
+          const latest = deps.archive.latestSnapshot();
+          redirect(res, `${latest ? `/runs/${latest.run.id}` : '/'}?notice=${encodeURIComponent('Brak nowych newsletterów.')}`);
         } catch (err) {
           logger.error({ err: errorMessage(err) }, 'Odświeżenie nieudane');
           redirect(res, `/?error=${encodeURIComponent(`Odświeżenie nieudane: ${errorMessage(err)}`)}`);
@@ -218,7 +215,7 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
           return;
         }
 
-        const item = getItemByMessageId(deps.db, data.messageId);
+        const item = deps.archive.getNewsletter(data.messageId);
         if (!item) {
           sendJson(res, 404, { error: 'Nie znaleziono newslettera.' });
           return;

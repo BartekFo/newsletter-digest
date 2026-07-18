@@ -7,7 +7,7 @@ import {
   shouldSkipStartupRefresh,
   type ReaderServerDeps,
 } from '../src/server.js';
-import { addRunItems, initSchema, insertItem, openDb, recordRun } from '../src/store.js';
+import { addRunItems, createDigestArchive, initSchema, insertItem, openDb, recordRun } from '../src/store.js';
 import type { Db } from '../src/types.js';
 import { buildAppConfig, buildDigestItem } from './builders.js';
 
@@ -29,7 +29,7 @@ const ITEM = buildDigestItem({
   isPaywalled: false,
 });
 
-type ServerOptions = Omit<ReaderServerDeps, 'db' | 'config'>;
+type ServerOptions = Omit<ReaderServerDeps, 'archive' | 'config'>;
 
 interface ServerContext {
   db: Db;
@@ -57,7 +57,7 @@ async function withServer(options: ServerOptions, fn: ServerCallback): Promise<v
   initSchema(db);
 
   const server = createReaderServer({
-    db,
+    archive: createDigestArchive(db),
     config: CONFIG,
     chatWithArticle: async () => 'Test answer',
     ...options,

@@ -8,13 +8,14 @@ import { fetchTopStories } from './hackernews.js';
 import { fetchNewMessages } from './imap.js';
 import { parseMail } from './parse.js';
 import { renderHtml } from './render.js';
-import { openDb, initSchema } from './store.js';
+import { createDigestArchive, openDb, initSchema, type DigestArchive } from './store.js';
 import { summarize } from './summarize.js';
 import { fetchWeather } from './weather.js';
 import type { AppConfig, AppLogger, Db } from './types.js';
 
 export interface Application {
   db: Db;
+  archive: DigestArchive;
   config: AppConfig;
   logger: AppLogger;
   refresh: NewsletterRefresh;
@@ -68,6 +69,7 @@ export function createApplication(
 
   return {
     db,
+    archive: createDigestArchive(db),
     config,
     logger,
     refresh: createNewsletterRefresh(refreshDeps),
