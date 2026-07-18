@@ -7,6 +7,11 @@ import { createLogger, silentLogger } from './logger.js';
 import { fetchNewMessages } from './imap.js';
 import { parseMail } from './parse.js';
 import { extractText } from './extract.js';
+import {
+  buildDigestEmail,
+  sendDigestEmail,
+  type DigestEmailMessage,
+} from './email.js';
 import { summarize } from './summarize.js';
 import { renderHtml } from './render.js';
 import { fetchWeather } from './weather.js';
@@ -28,6 +33,7 @@ import type {
   AppLogger,
   Db,
   DigestItem,
+  DigestMeta,
   FetchedMessage,
   HackerNewsStory,
   ParsedMail,
@@ -57,16 +63,9 @@ export interface DigestDeps {
   parseMail(raw: Buffer): Promise<ParsedMail>;
   extractText(html: string): Promise<string>;
   summarize(text: string, model: string): Promise<string>;
-  renderHtml(
-    items: DigestItem[],
-    meta: {
-      ranAt: string;
-      newCount: number;
-      gmailUser?: string;
-      weather: WeatherSummary | null;
-      hackernews: HackerNewsStory[] | null;
-    },
-  ): string;
+  renderHtml(items: DigestItem[], meta: DigestMeta): string;
+  buildDigestEmail(items: DigestItem[], meta: DigestMeta): DigestEmailMessage;
+  sendDigestEmail(config: AppConfig, message: DigestEmailMessage): Promise<void>;
   fetchWeather(config: AppConfig, logger: AppLogger): Promise<WeatherSummary | null>;
   fetchTopStories(n: number, logger: AppLogger): Promise<HackerNewsStory[] | null>;
   writeFile(path: string, content: string): Promise<void>;
@@ -105,6 +104,8 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
     extractText: extract,
     summarize: summariseFn,
     renderHtml: render,
+    buildDigestEmail: buildEmail,
+    sendDigestEmail: sendEmail,
     fetchWeather: weatherFn,
     fetchTopStories: hackernewsFn,
     writeFile,
@@ -208,13 +209,14 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
       hackernewsFn(6, logger).catch(() => null),
     ]);
 
-    const html = render(items, {
+    const digestMeta = {
       ranAt: now().toISOString(),
       newCount: newUids.length,
       gmailUser: config.gmailUser,
       weather,
       hackernews,
-    });
+    };
+    const html = render(items, digestMeta);
 
     await writeFile(config.outPath, html);
     logger.info({ outPath: config.outPath }, 'Zapisano digest');
@@ -229,6 +231,19 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
       hackernews,
     });
     addRunItems(db, runId, newMessageIds);
+
+    if (config.sendDigestEmail) {
+      try {
+        const email = buildEmail(items, digestMeta);
+        await sendEmail(config, email);
+        logger.info({ recipient: config.digestEmailRecipient, runId }, 'Wysłano digest e-mailem');
+      } catch (err) {
+        logger.error(
+          { recipient: config.digestEmailRecipient, runId, err: errorMessage(err) },
+          'Nie udało się wysłać digestu e-mailem — digest pozostaje zapisany lokalnie',
+        );
+      }
+    }
 
     await open(config.outPath);
 
@@ -283,6 +298,8 @@ if (isMain) {
         extractText,
         summarize,
         renderHtml,
+        buildDigestEmail,
+        sendDigestEmail,
         fetchWeather,
         fetchTopStories,
         writeFile: (path: string, content: string) => fsWriteFile(path, content, 'utf8'),

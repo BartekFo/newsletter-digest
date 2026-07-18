@@ -13,6 +13,8 @@ export interface AppConfig {
   outPath: string;
   weatherCity: string;
   logLevel: string;
+  sendDigestEmail: boolean;
+  digestEmailRecipient: string;
 }
 
 export interface FetchedMessage {

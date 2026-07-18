@@ -13,6 +13,7 @@ It does not send newsletter content to a paid AI API.
 - Creates short Polish summaries with a model running on your computer.
 - Opens a local reader at `http://localhost:3789`.
 - Keeps a history of previous digests.
+- Can email each new digest through Gmail so it is available away from the local reader.
 - Lets you ask the local model questions about an individual newsletter.
 - Adds current weather and top Hacker News stories when those public services are available.
 
@@ -90,6 +91,11 @@ BOOTSTRAP_DAYS=7
 OLLAMA_MODEL=gemma4:12b
 WEATHER_CITY=Warsaw
 PORT=3789
+
+# Email each new, non-empty digest through Gmail SMTP
+SEND_DIGEST_EMAIL=false
+# Defaults to GMAIL_USER when omitted
+DIGEST_EMAIL_TO=your.address@gmail.com
 ```
 
 On its first run, the application fetches newsletters from the previous seven days.
@@ -114,6 +120,9 @@ Stop the server with `Ctrl+C` in the terminal.
 - Select **Chat** on any newsletter to ask a question about its contents.
 - When a newsletter arrives from a new sender, add its Gmail filter. Future messages will
   receive the label automatically.
+- Set `SEND_DIGEST_EMAIL=true` to send every new, non-empty digest by email. The message
+  contains an email-safe version of the summaries and links; local-only controls such as
+  chat and refresh are intentionally omitted.
 
 ## Privacy and costs
 
@@ -123,8 +132,9 @@ service API key.
 
 The application connects to Gmail and retrieves weather and top Hacker News stories from
 public services. If the weather service or Hacker News is unavailable, the digest still
-works; it simply omits that section. Gmail access is used only to read the newsletter
-folder.
+works; it simply omits that section. Gmail access reads the newsletter folder and, only
+when `SEND_DIGEST_EMAIL=true`, sends the generated digest through Gmail SMTP. A delivery
+failure does not remove or invalidate the locally saved digest.
 
 ## Local files
 

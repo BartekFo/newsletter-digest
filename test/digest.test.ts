@@ -53,6 +53,8 @@ function makeDeps(db, overrides = {}) {
   let capturedHtml = null;
   let openFileCalled = false;
   let writeFileCalls = 0;
+  let sentEmail = null;
+  let sendEmailCalls = 0;
 
   const deps = {
     db,
@@ -64,6 +66,8 @@ function makeDeps(db, overrides = {}) {
       ollamaModel: 'test-model',
       dbPath: ':memory:',
       outPath: '/tmp/digest-test.html',
+      sendDigestEmail: false,
+      digestEmailRecipient: 'test@gmail.com',
     },
     fetchNewMessages: async (_config, _lastUid) =>
       FAKE_MAILS.map(makeFakeMail),
@@ -100,6 +104,15 @@ function makeDeps(db, overrides = {}) {
       },
     ],
     renderHtml,
+    buildDigestEmail: (items, meta) => ({
+      subject: `Digest: ${items.length}`,
+      html: `<p>${meta.newCount}</p>`,
+      text: String(meta.newCount),
+    }),
+    sendDigestEmail: async (_config, message) => {
+      sendEmailCalls++;
+      sentEmail = message;
+    },
     writeFile: async (_path, html) => {
       writeFileCalls++;
       capturedHtml = html;
@@ -112,6 +125,8 @@ function makeDeps(db, overrides = {}) {
     _getHtml: () => capturedHtml,
     _openFileCalled: () => openFileCalled,
     _writeFileCalls: () => writeFileCalls,
+    _sendEmailCalls: () => sendEmailCalls,
+    _sentEmail: () => sentEmail,
   };
 
   return { ...deps, ...overrides };
@@ -247,6 +262,43 @@ describe('runDigest', () => {
     assert.equal(deps._openFileCalled(), true);
   });
 
+  it('emails a new digest when email delivery is enabled', async () => {
+    const deps = makeDeps(db);
+    deps.config.sendDigestEmail = true;
+
+    await runDigest(deps);
+
+    assert.equal(deps._sendEmailCalls(), 1);
+    assert.deepEqual(deps._sentEmail(), {
+      subject: 'Digest: 2',
+      html: '<p>2</p>',
+      text: '2',
+    });
+  });
+
+  it('keeps a generated digest successful when email delivery fails', async () => {
+    const deps = makeDeps(db, {
+      sendDigestEmail: async () => {
+        throw new Error('SMTP unavailable');
+      },
+    });
+    deps.config.sendDigestEmail = true;
+
+    const result = await runDigest(deps);
+
+    assert.deepEqual(result, { fetched: 2, newItems: 2, runId: 1 });
+    assert.equal(deps._openFileCalled(), true);
+    assert.equal(db.prepare('SELECT ok FROM runs WHERE id = 1').get().ok, 1);
+  });
+
+  it('does not email when delivery is disabled', async () => {
+    const deps = makeDeps(db);
+
+    await runDigest(deps);
+
+    assert.equal(deps._sendEmailCalls(), 0);
+  });
+
   describe('dedup: second run with same messages yields newItems=0', () => {
     it('does not insert duplicates and returns newItems=0', async () => {
       const deps = makeDeps(db);
@@ -266,6 +318,16 @@ describe('runDigest', () => {
       const runCount = db.prepare('SELECT COUNT(*) AS c FROM runs').get().c;
       assert.equal(runCount, 1, 'an empty refresh must not create a new digest snapshot');
       assert.equal(deps._writeFileCalls(), 1, 'an empty refresh must not overwrite digest.html');
+    });
+
+    it('does not send another email for an empty refresh', async () => {
+      const deps = makeDeps(db);
+      deps.config.sendDigestEmail = true;
+
+      await runDigest(deps);
+      await runDigest(deps);
+
+      assert.equal(deps._sendEmailCalls(), 1);
     });
   });
 

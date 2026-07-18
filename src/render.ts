@@ -1,33 +1,5 @@
-import { normalizeArticleUrl } from './link.js';
+import { escapeHtml, gmailMessageUrl, safeUrl } from './renderUtils.js';
 import type { DigestItem, DigestMeta, HackerNewsStory, RunSummary, WeatherSummary } from './types.js';
-
-/**
- * Escapes HTML special characters to prevent injection from untrusted input
- * (email headers: subject, sender).
- */
-function escapeHtml(str: unknown): string {
-  if (str == null) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-/**
- * Returns the URL only if it is a safe http/https link, else null.
- * Blocks javascript:/data: schemes from reaching an href.
- */
-function safeUrl(url: unknown): string | null {
-  if (!url || typeof url !== 'string') return null;
-  return /^https?:\/\//i.test(url) ? normalizeArticleUrl(url) : null;
-}
-
-function gmailMessageUrl(messageId: string, gmailUser?: string): string {
-  const account = gmailUser ? encodeURIComponent(gmailUser) : '0';
-  return `https://mail.google.com/mail/u/${account}/#search/rfc822msgid:${encodeURIComponent(messageId)}`;
-}
 
 function formatDate(iso: string): string {
   try {

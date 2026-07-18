@@ -6,6 +6,7 @@ import { chatWithArticle, type ChatMessage } from './chatModel.js';
 import { loadConfig } from './config.js';
 import { runDigest, type DigestDeps } from './digest.js';
 import { extractText } from './extract.js';
+import { buildDigestEmail, sendDigestEmail } from './email.js';
 import { fetchTopStories } from './hackernews.js';
 import { fetchNewMessages } from './imap.js';
 import { createLogger, silentLogger } from './logger.js';
@@ -133,6 +134,8 @@ function createDigestDeps(deps: ReaderServerDeps): DigestDeps {
     extractText,
     summarize,
     renderHtml,
+    buildDigestEmail,
+    sendDigestEmail,
     fetchWeather,
     fetchTopStories,
     writeFile: async () => undefined,

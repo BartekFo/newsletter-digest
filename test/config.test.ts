@@ -29,6 +29,8 @@ test('returns config with defaults when only required vars are set', () => {
   assert.equal(cfg.ollamaModel, 'gemma4:12b');
   assert.equal(cfg.dbPath, './digest.db');
   assert.equal(cfg.outPath, './digest.html');
+  assert.equal(cfg.sendDigestEmail, false);
+  assert.equal(cfg.digestEmailRecipient, 'user@example.com');
 });
 
 test('overrides defaults with env vars', () => {
@@ -40,6 +42,8 @@ test('overrides defaults with env vars', () => {
     OLLAMA_MODEL: 'llama3',
     DB_PATH: '/tmp/test.db',
     OUT_PATH: '/tmp/test.html',
+    SEND_DIGEST_EMAIL: 'true',
+    DIGEST_EMAIL_TO: 'reader@example.com',
   };
   const cfg = loadConfig(env);
 
@@ -48,4 +52,16 @@ test('overrides defaults with env vars', () => {
   assert.equal(cfg.ollamaModel, 'llama3');
   assert.equal(cfg.dbPath, '/tmp/test.db');
   assert.equal(cfg.outPath, '/tmp/test.html');
+  assert.equal(cfg.sendDigestEmail, true);
+  assert.equal(cfg.digestEmailRecipient, 'reader@example.com');
+});
+
+test('uses the Gmail account when DIGEST_EMAIL_TO is blank', () => {
+  const cfg = loadConfig({
+    GMAIL_USER: 'user@example.com',
+    GMAIL_APP_PASSWORD: 'secret',
+    DIGEST_EMAIL_TO: '   ',
+  });
+
+  assert.equal(cfg.digestEmailRecipient, 'user@example.com');
 });

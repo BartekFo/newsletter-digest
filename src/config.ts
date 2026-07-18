@@ -9,7 +9,8 @@ import type { AppConfig } from './types.js';
  * @param {NodeJS.ProcessEnv} env - environment variables to read from
  * @returns {{ gmailUser: string, gmailAppPassword: string, imapFolder: string,
  *             bootstrapDays: number, ollamaModel: string, dbPath: string, outPath: string,
- *             weatherCity: string, logLevel: string }}
+ *             weatherCity: string, logLevel: string, sendDigestEmail: boolean,
+ *             digestEmailRecipient: string }}
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (!env.GMAIL_USER) {
@@ -29,6 +30,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     outPath: env.OUT_PATH ?? './digest.html',
     weatherCity: env.WEATHER_CITY ?? 'Warsaw',
     logLevel: env.LOG_LEVEL ?? 'info',
+    sendDigestEmail: env.SEND_DIGEST_EMAIL?.toLowerCase() === 'true',
+    digestEmailRecipient: env.DIGEST_EMAIL_TO?.trim() || env.GMAIL_USER,
   };
 }
 
