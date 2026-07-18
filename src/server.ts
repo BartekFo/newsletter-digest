@@ -4,14 +4,18 @@ import { fileURLToPath } from 'node:url';
 
 import { chatWithArticle, type ChatMessage } from './chatModel.js';
 import { loadConfig } from './config.js';
-import { runDigest, type DigestDeps } from './digest.js';
+import {
+  createNewsletterRefresh,
+  type DigestDeps,
+  type NewsletterRefresh,
+} from './digest.js';
 import { extractText } from './extract.js';
 import { buildDigestEmail, sendDigestEmail } from './email.js';
 import { fetchTopStories } from './hackernews.js';
 import { fetchNewMessages } from './imap.js';
 import { createLogger, silentLogger } from './logger.js';
 import { parseMail } from './parse.js';
-import { renderDigestPage, renderHtml, renderRunsPage } from './render.js';
+import { renderDigestPage, renderRunsPage } from './render.js';
 import { summarize } from './summarize.js';
 import {
   getItemByMessageId,
@@ -119,7 +123,7 @@ export interface ReaderServerDeps {
   db: Db;
   config: AppConfig;
   logger?: AppLogger;
-  runDigest?: (deps: DigestDeps) => Promise<{ fetched: number; newItems: number; runId: number | null }>;
+  refresh?: NewsletterRefresh;
   chatWithArticle?: typeof chatWithArticle;
   chatTimeoutMs?: number;
   now?: () => Date;
@@ -133,13 +137,10 @@ function createDigestDeps(deps: ReaderServerDeps): DigestDeps {
     parseMail,
     extractText,
     summarize,
-    renderHtml,
     buildDigestEmail,
     sendDigestEmail,
     fetchWeather,
     fetchTopStories,
-    writeFile: async () => undefined,
-    openFile: async () => undefined,
     now: deps.now ?? (() => new Date()),
     logger: deps.logger ?? silentLogger,
   };
@@ -169,7 +170,7 @@ function renderEmpty(config: AppConfig, extras: { notice?: string; error?: strin
 
 export function createReaderServer(deps: ReaderServerDeps): http.Server {
   const logger = deps.logger ?? silentLogger;
-  const refresh = deps.runDigest ?? runDigest;
+  const refresh = deps.refresh ?? createNewsletterRefresh(createDigestDeps(deps));
   const chat = deps.chatWithArticle ?? chatWithArticle;
   const chatTimeoutMs = deps.chatTimeoutMs ?? CHAT_TIMEOUT_MS;
 
@@ -208,7 +209,7 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
 
       if (req.method === 'POST' && url.pathname === '/refresh') {
         try {
-          const result = await refresh(createDigestDeps(deps));
+          const result = await refresh.refresh();
           if (result.runId != null) {
             redirect(res, `/runs/${result.runId}?notice=${encodeURIComponent('Pobrano nowe newslettery.')}`);
             return;
@@ -301,8 +302,8 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
 }
 
 async function runStartupRefresh(deps: ReaderServerDeps): Promise<void> {
-  const refresh = deps.runDigest ?? runDigest;
-  await refresh(createDigestDeps(deps));
+  const refresh = deps.refresh ?? createNewsletterRefresh(createDigestDeps(deps));
+  await refresh.refresh();
 }
 
 /** True when startup should skip IMAP fetch and just serve saved digests. */

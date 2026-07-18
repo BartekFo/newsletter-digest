@@ -60,15 +60,30 @@ export interface DigestDeps {
   parseMail(raw: Buffer): Promise<ParsedMail>;
   extractText(html: string): Promise<string>;
   summarize(text: string, model: string): Promise<string>;
-  renderHtml(items: DigestItem[], meta: DigestMeta): string;
+  renderHtml?(items: DigestItem[], meta: DigestMeta): string;
   buildDigestEmail(items: DigestItem[], meta: DigestMeta): DigestEmailMessage;
   sendDigestEmail(config: AppConfig, message: DigestEmailMessage): Promise<void>;
   fetchWeather(config: AppConfig, logger: AppLogger): Promise<WeatherSummary | null>;
   fetchTopStories(n: number, logger: AppLogger): Promise<HackerNewsStory[] | null>;
-  writeFile(path: string, content: string): Promise<void>;
-  openFile(path: string): Promise<void>;
+  writeFile?(path: string, content: string): Promise<void>;
+  openFile?(path: string): Promise<void>;
   now(): Date;
   logger?: AppLogger;
+}
+
+export interface RefreshResult {
+  fetched: number;
+  newItems: number;
+  runId: number | null;
+}
+
+export interface NewsletterRefresh {
+  refresh(): Promise<RefreshResult>;
+}
+
+/** Build the small public use-case seam used by Reader and CLI callers. */
+export function createNewsletterRefresh(deps: DigestDeps): NewsletterRefresh {
+  return { refresh: () => runDigest(deps) };
 }
 
 /**
@@ -92,7 +107,7 @@ export interface DigestDeps {
  *
  * @returns {Promise<{fetched: number, newItems: number, runId: number | null}>}
  */
-export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; newItems: number; runId: number | null }> {
+export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
   const {
     db,
     config,
@@ -226,11 +241,11 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
     // Delivery consumes the committed snapshot, never the in-flight staging
     // collection. A delivery failure cannot invalidate publication.
     const publishedItems = getItemsByRunId(db, runId);
-    try {
+    if (render && writeFile) try {
       const html = render(publishedItems, digestMeta);
       await writeFile(config.outPath, html);
       logger.info({ outPath: config.outPath, runId }, 'Zapisano digest');
-      await open(config.outPath);
+      await open?.(config.outPath);
     } catch (err) {
       logger.error(
         { outPath: config.outPath, runId, err: errorMessage(err) },
@@ -294,7 +309,7 @@ if (isMain) {
     initSchema(db);
 
     try {
-      await runDigest({
+      await createNewsletterRefresh({
         db,
         config,
         fetchNewMessages,
@@ -310,7 +325,7 @@ if (isMain) {
         openFile,
         now: () => new Date(),
         logger,
-      });
+      }).refresh();
     } catch {
       // runDigest already logged the failure; just set the exit code.
       process.exitCode = 1;

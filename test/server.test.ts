@@ -258,13 +258,10 @@ test('POST /chat stops waiting for an unresponsive model and logs the timeout', 
   });
 });
 
-test('POST /refresh redirects to new snapshot when runDigest creates one', async () => {
+test('POST /refresh invokes the small refresh use-case and redirects to its snapshot', async () => {
   await withServer({
-    runDigest: async ({ db }) => {
-      insertItem(db, ITEM);
-      const runId = recordRun(db, { fetched: 1, newItems: 1, durationMs: 10, ok: true });
-      addRunItems(db, runId, [ITEM.messageId]);
-      return { fetched: 1, newItems: 1, runId };
+    refresh: {
+      refresh: async () => ({ fetched: 1, newItems: 1, runId: 1 }),
     },
   }, async ({ baseUrl }) => {
     const response = await fetch(`${baseUrl}/refresh`, { method: 'POST', redirect: 'manual' });
@@ -276,7 +273,9 @@ test('POST /refresh redirects to new snapshot when runDigest creates one', async
 
 test('POST /refresh keeps the latest snapshot when no new newsletters are found', async () => {
   await withServer({
-    runDigest: async () => ({ fetched: 0, newItems: 0, runId: null }),
+    refresh: {
+      refresh: async () => ({ fetched: 0, newItems: 0, runId: null }),
+    },
   }, async ({ db, baseUrl }) => {
     insertItem(db, ITEM);
     const runId = recordRun(db, { fetched: 1, newItems: 1, durationMs: 10, ok: true });
