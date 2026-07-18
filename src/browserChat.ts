@@ -4,7 +4,7 @@ export interface BrowserChatMessage {
 }
 
 export interface BrowserChatRequest {
-  messageId: string;
+  newsletterId: string;
   question: string;
   history: BrowserChatMessage[];
 }
@@ -24,7 +24,7 @@ export interface BrowserChatRuntime {
 }
 
 export interface BrowserChatSession {
-  open(messageId: string, subject: string): boolean;
+  open(newsletterId: string, subject: string): boolean;
   submit(question: string): Promise<boolean>;
 }
 
@@ -39,14 +39,14 @@ export function createBrowserChatSession(options: {
     setTimeout: (callback, timeoutMs) => setTimeout(callback, timeoutMs),
     clearTimeout: (timeout) => clearTimeout(timeout),
   };
-  let messageId: string | null = null;
+  let newsletterId: string | null = null;
   let history: BrowserChatMessage[] = [];
   let sending = false;
 
   return {
     open(nextMessageId, subject) {
       if (sending) return false;
-      messageId = nextMessageId;
+      newsletterId = nextMessageId;
       history = [];
       options.view.reset(subject || 'Chat');
       options.view.setSending(false);
@@ -56,9 +56,9 @@ export function createBrowserChatSession(options: {
 
     async submit(question) {
       const text = question.trim();
-      if (!text || !messageId || sending) return false;
+      if (!text || !newsletterId || sending) return false;
 
-      const currentMessageId = messageId;
+      const currentNewsletterId = newsletterId;
       const requestHistory = [...history];
       options.view.clearQuestion();
       options.view.addMessage('user', text);
@@ -70,7 +70,7 @@ export function createBrowserChatSession(options: {
 
       try {
         const answer = await options.send({
-          messageId: currentMessageId,
+          newsletterId: currentNewsletterId,
           question: text,
           history: requestHistory,
         }, controller.signal);
@@ -152,7 +152,7 @@ export function renderBrowserChatScript(): string {
 
   document.querySelectorAll('.chat-button').forEach((button) => {
     button.addEventListener('click', () => {
-      session.open(button.dataset.messageId, button.dataset.subject || 'Chat');
+      session.open(button.dataset.newsletterId, button.dataset.subject || 'Chat');
     });
   });
   close.addEventListener('click', () => { panel.hidden = true; });

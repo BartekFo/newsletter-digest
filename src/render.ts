@@ -1,5 +1,5 @@
 import { renderBrowserChatScript } from './browserChat.js';
-import { escapeHtml, gmailMessageUrl, safeUrl } from './renderUtils.js';
+import { escapeHtml, gmailMessageIdFromMetadata, gmailMessageUrl, safeUrl } from './renderUtils.js';
 import type { DigestItem, DigestMeta, HackerNewsStory, RunSummary, WeatherSummary } from './types.js';
 
 const THEME_CSS = `
@@ -355,10 +355,11 @@ ${sorted.map(item => {
           ? `<p class="summary">${escapeHtml(item.summary)}</p>`
           : '<p class="summary empty">(brak streszczenia)</p>';
 
-        const sourceLink = item.messageId
+        const gmailMessageId = gmailMessageIdFromMetadata(item.source.metadata);
+        const sourceLink = gmailMessageId
           ? `
           <span class="dot" aria-hidden="true">·</span>
-          <a class="gmail-link" href="${escapeHtml(gmailMessageUrl(item.messageId, meta.gmailUser))}" target="_blank" rel="noopener">Otwórz w Gmailu</a>`
+          <a class="gmail-link" href="${escapeHtml(gmailMessageUrl(gmailMessageId, meta.gmailUser))}" target="_blank" rel="noopener">Otwórz w Gmailu</a>`
           : '';
 
         const articleLink = safeUrl(item.link);
@@ -370,8 +371,8 @@ ${sorted.map(item => {
           ? '<span class="paywall-badge" title="Newsletter wygląda na częściowo albo w całości płatny">Płatne</span>'
           : '';
 
-        const chatButton = item.messageId
-          ? `<button type="button" class="chat-button" data-message-id="${escapeHtml(item.messageId)}" data-subject="${escapeHtml(item.subject)}">Chat</button>`
+        const chatButton = item.id
+          ? `<button type="button" class="chat-button" data-newsletter-id="${escapeHtml(item.id)}" data-subject="${escapeHtml(item.subject)}">Chat</button>`
           : '';
 
         return `

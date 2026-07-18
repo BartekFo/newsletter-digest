@@ -164,7 +164,7 @@ test('GET / renders saved weather and HackerNews for latest run', async () => {
   });
 });
 
-test('POST /chat without messageId returns 400', async () => {
+test('POST /chat without newsletterId returns 400', async () => {
   await withServer({}, async ({ baseUrl }) => {
     const invalidPayload: unknown = { question: 'Co tu jest?' };
     const response = await postChat(baseUrl, invalidPayload);
@@ -172,13 +172,13 @@ test('POST /chat without messageId returns 400', async () => {
 
     assert.equal(response.status, 400);
     assert.ok(typeof json.error === 'string');
-    assert.ok(json.error.includes('messageId'));
+    assert.ok(json.error.includes('newsletterId'));
   });
 });
 
 test('POST /chat without question returns 400', async () => {
   await withServer({}, async ({ baseUrl }) => {
-    const invalidPayload: unknown = { messageId: ITEM.messageId };
+    const invalidPayload: unknown = { newsletterId: ITEM.id };
     const response = await postChat(baseUrl, invalidPayload);
     const json = await readJsonObject(response);
 
@@ -191,7 +191,7 @@ test('POST /chat without question returns 400', async () => {
 test('POST /chat for unknown item returns 404', async () => {
   await withServer({}, async ({ baseUrl }) => {
     const response = await postChat(baseUrl, {
-      messageId: '<missing@test>',
+      newsletterId: 'missing-newsletter',
       question: 'Co tu jest?',
     });
 
@@ -210,7 +210,7 @@ test('POST /chat for known item returns answer JSON', async () => {
     insertItem(db, ITEM);
 
     const response = await postChat(baseUrl, {
-      messageId: ITEM.messageId,
+      newsletterId: ITEM.id,
       question: 'Co tu jest?',
       history: [{ role: 'user', content: 'Wczesniejsze pytanie' }],
     });
@@ -245,7 +245,7 @@ test('POST /chat stops waiting for an unresponsive model and logs the timeout', 
     insertItem(db, ITEM);
 
     const response = await postChat(baseUrl, {
-      messageId: ITEM.messageId,
+      newsletterId: ITEM.id,
       question: 'Co tu jest?',
     });
     const json = await readJsonObject(response);

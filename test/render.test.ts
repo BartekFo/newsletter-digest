@@ -101,7 +101,7 @@ test('empty items array returns valid page with brak message, no throw', () => {
   assert.ok(html.includes('Brak nowych newsletterów'), 'missing brak message');
 });
 
-test('item with messageId renders a Gmail deep-link containing rfc822msgid', () => {
+test('item with Gmail source metadata renders a deep-link containing rfc822msgid', () => {
   const html = renderHtml([ITEM_A], META);
 
   assert.ok(html.includes('rfc822msgid:'), 'href missing rfc822msgid: prefix');
@@ -119,10 +119,13 @@ test('Gmail deep-link targets configured newsletter account when present', () =>
   );
 });
 
-test('messageId with special chars (<, &) is URL-encoded and HTML-attribute-escaped in href', () => {
+test('Gmail metadata with special chars is URL-encoded and HTML-attribute-escaped in href', () => {
   const specialItem = {
     ...ITEM_A,
-    messageId: '<foo+bar&baz@example.com>',
+    source: {
+      ...ITEM_A.source,
+      metadata: { ...ITEM_A.source.metadata, gmailMessageId: '<foo+bar&baz@example.com>' },
+    },
   };
   const html = renderHtml([specialItem], META);
 
@@ -139,18 +142,18 @@ test('messageId with special chars (<, &) is URL-encoded and HTML-attribute-esca
   assert.ok(!href.includes('&baz'), 'raw & found unescaped inside href attribute (should be %26baz)');
 });
 
-test('item with null messageId renders no href, no throw', () => {
-  const noId: unknown = { ...ITEM_A, messageId: null };
+test('item without Gmail source metadata renders no Gmail href', () => {
+  const noId: unknown = { ...ITEM_A, source: { ...ITEM_A.source, metadata: {} } };
   let html = '';
   assert.doesNotThrow(() => { html = renderUnknownItems([noId]); });
   assert.ok(!html.includes('rfc822msgid:'), 'href rendered despite null messageId');
 });
 
-test('item with messageId renders a Chat button with data-message-id', () => {
+test('item renders a Chat button with internal newsletter identity', () => {
   const html = renderHtml([ITEM_A], META);
 
   assert.ok(html.includes('class="chat-button"'), 'chat button missing');
-  assert.ok(html.includes('data-message-id="&lt;a@test&gt;"'), 'message id data attribute missing');
+  assert.ok(html.includes(`data-newsletter-id="${ITEM_A.id}"`), 'newsletter id data attribute missing');
 });
 
 test('render does not include cleanText body', () => {
@@ -160,8 +163,8 @@ test('render does not include cleanText body', () => {
   assert.ok(!html.includes('Body B'), 'cleanText for item B leaked into HTML');
 });
 
-test('item with empty string messageId renders no href, no throw', () => {
-  const emptyId = { ...ITEM_A, messageId: '' };
+test('item with empty Gmail metadata renders no deep link', () => {
+  const emptyId = { ...ITEM_A, source: { ...ITEM_A.source, metadata: { gmailMessageId: '' } } };
   let html = '';
   assert.doesNotThrow(() => { html = renderHtml([emptyId], META); });
   assert.ok(!html.includes('rfc822msgid:'), 'href rendered despite empty messageId');

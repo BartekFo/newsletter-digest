@@ -1,6 +1,6 @@
 import nodemailer from 'nodemailer';
 
-import { escapeHtml, gmailMessageUrl, safeUrl } from './renderUtils.js';
+import { escapeHtml, gmailMessageIdFromMetadata, gmailMessageUrl, safeUrl } from './renderUtils.js';
 import type { AppConfig, DigestItem, DigestMeta } from './types.js';
 
 export interface DigestEmailMessage {
@@ -51,7 +51,8 @@ export function buildDigestEmail(items: DigestItem[], meta: DigestMeta): DigestE
     const subject = articleUrl
       ? `<a href="${escapeHtml(articleUrl)}" style="color:#1b1a17;text-decoration:none">${escapeHtml(item.subject)}</a>`
       : escapeHtml(item.subject);
-    const gmailUrl = item.messageId ? gmailMessageUrl(item.messageId, meta.gmailUser) : null;
+    const gmailMessageId = gmailMessageIdFromMetadata(item.source.metadata);
+    const gmailUrl = gmailMessageId ? gmailMessageUrl(gmailMessageId, meta.gmailUser) : null;
     const summary = item.summary ?? '(brak streszczenia)';
 
     return `<div style="margin:0 0 14px;padding:22px;background:#ffffff;border:1px solid #e4e0d6;border-radius:12px">
@@ -84,7 +85,8 @@ export function buildDigestEmail(items: DigestItem[], meta: DigestMeta): DigestE
     : '';
 
   const textItems = sorted.map((item) => {
-    const links = [safeUrl(item.link), item.messageId ? gmailMessageUrl(item.messageId, meta.gmailUser) : null]
+    const gmailMessageId = gmailMessageIdFromMetadata(item.source.metadata);
+    const links = [safeUrl(item.link), gmailMessageId ? gmailMessageUrl(gmailMessageId, meta.gmailUser) : null]
       .filter((url): url is string => Boolean(url))
       .join('\n');
     return `${item.subject}\n${item.sender} · ${formatDate(item.date)}\n${item.summary ?? '(brak streszczenia)'}${links ? `\n${links}` : ''}`;

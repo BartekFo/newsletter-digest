@@ -80,6 +80,7 @@ test('success appends the answer and sends history with the next question', asyn
   await chat.submit('Pierwsze pytanie');
   await chat.submit('Drugie pytanie');
 
+  assert.equal(requests[0]?.newsletterId, 'newsletter-1');
   assert.ok(view.events.some((event) => event.type === 'assistant' && event.value === 'Pierwsza odpowiedź'));
   assert.deepEqual(requests[1]?.history, [
     { role: 'user', content: 'Pierwsze pytanie' },

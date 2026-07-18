@@ -202,8 +202,8 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
         }
 
         const data = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
-        if (typeof data.messageId !== 'string' || data.messageId.trim() === '') {
-          sendJson(res, 400, { error: 'messageId jest wymagany.' });
+        if (typeof data.newsletterId !== 'string' || data.newsletterId.trim() === '') {
+          sendJson(res, 400, { error: 'newsletterId jest wymagany.' });
           return;
         }
         if (typeof data.question !== 'string' || data.question.trim() === '') {
@@ -215,7 +215,7 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
           return;
         }
 
-        const item = deps.archive.getNewsletter(data.messageId);
+        const item = deps.archive.getNewsletter(data.newsletterId);
         if (!item) {
           sendJson(res, 404, { error: 'Nie znaleziono newslettera.' });
           return;
@@ -227,7 +227,7 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
 
         const startedAt = Date.now();
         const logContext = {
-          messageId: item.messageId,
+          newsletterId: item.id,
           subject: item.subject,
           model: deps.config.ollamaModel,
         };
