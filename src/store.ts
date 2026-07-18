@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import type { Db, DigestItem, HackerNewsStory, RunSummary, WeatherSummary } from './types.js';
+import type { Db, DigestItem, HackerNewsStory, NewsletterSourceIdentity, RunSummary, WeatherSummary } from './types.js';
 
 interface StateRow {
   value: string;
@@ -57,13 +57,13 @@ export interface DigestSnapshot {
 
 export interface DigestArchive {
   getCursor(): number | null;
-  isKnown(messageId: string): boolean;
+  isKnown(source: NewsletterSourceIdentity): boolean;
   publishSnapshot(publication: SnapshotPublication): number;
   recordFailedRefresh(run: RunRecord): void;
   latestSnapshot(): DigestSnapshot | null;
   listSnapshots(): RunSummary[];
   getSnapshot(runId: number): DigestSnapshot | null;
-  getNewsletter(messageId: string): DigestItem | null;
+  getNewsletter(newsletterId: string): DigestItem | null;
   close(): void;
 }
 
@@ -260,12 +260,17 @@ export function getItemByMessageId(db: Db, messageId: string): DigestItem | null
   return row ? rowToItem(row) : null;
 }
 
-export function addRunItems(db: Db, runId: number, messageIds: string[]): void {
-  if (messageIds.length === 0) return;
+export function getItemByNewsletterId(db: Db, newsletterId: string): DigestItem | null {
+  const row = db.prepare('SELECT * FROM items WHERE newsletter_id = ?').get(newsletterId) as ItemRow | undefined;
+  return row ? rowToItem(row) : null;
+}
+
+export function addRunItems(db: Db, runId: number, newsletterIds: string[]): void {
+  if (newsletterIds.length === 0) return;
 
   const insert = db.prepare(
     `INSERT OR IGNORE INTO run_items (run_id, message_id, newsletter_id)
-     SELECT ?, message_id, newsletter_id FROM items WHERE message_id = ?`,
+     SELECT ?, message_id, newsletter_id FROM items WHERE newsletter_id = ?`,
   );
   const insertMany = db.transaction((ids: string[]) => {
     for (const messageId of ids) {
@@ -273,7 +278,7 @@ export function addRunItems(db: Db, runId: number, messageIds: string[]): void {
     }
   });
 
-  insertMany(messageIds);
+  insertMany(newsletterIds);
 }
 
 /**
@@ -288,7 +293,7 @@ export function publishSnapshot(db: Db, publication: SnapshotPublication): numbe
     }
 
     const runId = recordRun(db, run);
-    addRunItems(db, runId, items.map((item) => item.messageId));
+    addRunItems(db, runId, items.map((item) => item.id));
     setLastUid(db, cursorUid);
     return runId;
   });
@@ -341,7 +346,7 @@ export function getItemsByRunId(db: Db, runId: number): DigestItem[] {
     .prepare(
       `SELECT i.*
        FROM run_items ri
-       JOIN items i ON i.message_id = ri.message_id
+       JOIN items i ON i.newsletter_id = ri.newsletter_id
        WHERE ri.run_id = ?
        ORDER BY datetime(i.date) DESC, i.uid DESC`,
     )
@@ -358,7 +363,9 @@ export function createDigestArchive(db: Db): DigestArchive {
 
   return {
     getCursor: () => getLastUid(db),
-    isKnown: (messageId) => isKnown(db, messageId),
+    isKnown: (source) => db.prepare(
+      'SELECT 1 FROM items WHERE source_type = ? AND source_external_id = ?',
+    ).get(source.type, source.externalId) !== undefined,
     publishSnapshot: (publication) => publishSnapshot(db, publication),
     recordFailedRefresh: (run) => { recordRun(db, { ...run, ok: false }); },
     latestSnapshot() {
@@ -367,7 +374,9 @@ export function createDigestArchive(db: Db): DigestArchive {
     },
     listSnapshots: () => getRunSummaries(db),
     getSnapshot,
-    getNewsletter: (messageId) => getItemByMessageId(db, messageId),
+    getNewsletter: (newsletterId) => (
+      getItemByNewsletterId(db, newsletterId) ?? getItemByMessageId(db, newsletterId)
+    ),
     close: () => db.close(),
   };
 }

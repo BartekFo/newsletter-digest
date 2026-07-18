@@ -58,6 +58,16 @@ interface DigestTestControls {
 
 type TestDigestDeps = DigestDeps & DigestTestControls;
 
+function assertRefreshSummary(
+  result: Awaited<ReturnType<typeof runDigest>>,
+  expected: { fetched: number; newItems: number; runId: number | null },
+): void {
+  assert.deepEqual(
+    { fetched: result.fetched, newItems: result.newItems, runId: result.runId },
+    expected,
+  );
+}
+
 function makeDeps(db: Db, overrides: Partial<DigestDeps> = {}): TestDigestDeps {
   let capturedHtml: string | null = null;
   let openFileCalled = false;
@@ -146,7 +156,8 @@ describe('runDigest', () => {
     const deps = makeDeps(db);
     const result = await runDigest(deps);
 
-    assert.deepEqual(result, { fetched: 2, newItems: 2, runId: 1 });
+    assertRefreshSummary(result, { fetched: 2, newItems: 2, runId: 1 });
+    assert.equal(result.newsletterIds.length, 2);
   });
 
   it('publishes both items in db with summaries set', async () => {
@@ -201,7 +212,7 @@ describe('runDigest', () => {
     });
 
     const result = await runDigest(deps);
-    assert.deepEqual(result, { fetched: 2, newItems: 2, runId: 1 });
+    assertRefreshSummary(result, { fetched: 2, newItems: 2, runId: 1 });
 
     const html = deps._getHtml();
     assert.ok(html, 'writeFile should have been called');
@@ -215,7 +226,7 @@ describe('runDigest', () => {
     });
 
     const result = await runDigest(deps);
-    assert.deepEqual(result, { fetched: 2, newItems: 2, runId: 1 });
+    assertRefreshSummary(result, { fetched: 2, newItems: 2, runId: 1 });
   });
 
   it('advances the UID cursor to the max uid after success', async () => {
@@ -328,7 +339,7 @@ describe('runDigest', () => {
 
     const result = await runDigest(deps);
 
-    assert.deepEqual(result, { fetched: 2, newItems: 2, runId: 1 });
+    assertRefreshSummary(result, { fetched: 2, newItems: 2, runId: 1 });
     assert.equal(deps._openFileCalled(), true);
     const run = db.prepare('SELECT ok FROM runs WHERE id = 1').get() as { ok: number };
     assert.equal(run.ok, 1);
@@ -370,7 +381,7 @@ describe('runDigest', () => {
       // Second run — same fake fetch returns the same 2 messages
       const result2 = await runDigest(deps);
 
-      assert.deepEqual(result2, { fetched: 2, newItems: 0, runId: null });
+      assertRefreshSummary(result2, { fetched: 2, newItems: 0, runId: null });
 
       // Still exactly 2 rows in items table
       const count = (db.prepare('SELECT COUNT(*) AS c FROM items').get() as { c: number }).c;
@@ -409,7 +420,7 @@ describe('runDigest', () => {
       const deps = makeDeps(db, { summarize: failingSummarize });
 
       const result = await runDigest(deps);
-      assert.deepEqual(result, { fetched: 2, newItems: 2, runId: 1 });
+      assertRefreshSummary(result, { fetched: 2, newItems: 2, runId: 1 });
 
       const row = db.prepare('SELECT * FROM runs ORDER BY id DESC LIMIT 1').get() as { ok: number };
       assert.equal(row.ok, 1);

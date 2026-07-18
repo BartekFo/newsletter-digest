@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   openDb,
+  createDigestArchive,
   initSchema,
   getLastUid,
   setLastUid,
@@ -196,6 +197,23 @@ test('isKnown returns true after insertItem', () => {
   db.close();
 });
 
+test('archive deduplicates by source identity instead of the legacy message key', () => {
+  const db = freshDb();
+  const archive = createDigestArchive(db);
+  insertItem(db, SAMPLE_ITEM);
+
+  assert.equal(archive.isKnown({ type: 'gmail', externalId: SAMPLE_ITEM.source.externalId }), true);
+  assert.equal(archive.isKnown({ type: 'gmail', externalId: 'different-source-id' }), false);
+
+  const duplicateSource = buildDigestItem({
+    id: 'different-internal-id',
+    messageId: '<different-legacy-id@example.com>',
+    source: { ...SAMPLE_ITEM.source },
+  });
+  assert.equal(insertItem(db, duplicateSource), false);
+  archive.close();
+});
+
 test('setSummary updates the summary for a known item', () => {
   const db = freshDb();
   insertItem(db, SAMPLE_ITEM);
@@ -279,7 +297,7 @@ test('addRunItems links a run to items and getItemsByRunId returns snapshot item
   insertItem(db, item2);
 
   const runId = recordRun(db, { fetched: 2, newItems: 2, durationMs: 10, ok: true });
-  addRunItems(db, runId, [SAMPLE_ITEM.messageId, item2.messageId]);
+  addRunItems(db, runId, [SAMPLE_ITEM.id, item2.id]);
 
   const items = getItemsByRunId(db, runId);
   assert.equal(items.length, 2);
@@ -293,7 +311,7 @@ test('getRunSummaries and getLatestNonEmptyRun ignore empty technical runs', () 
 
   const emptyRunId = recordRun(db, { fetched: 0, newItems: 0, durationMs: 5, ok: true });
   const nonEmptyRunId = recordRun(db, { fetched: 1, newItems: 1, durationMs: 10, ok: true });
-  addRunItems(db, nonEmptyRunId, [SAMPLE_ITEM.messageId]);
+  addRunItems(db, nonEmptyRunId, [SAMPLE_ITEM.id]);
 
   const summaries = getRunSummaries(db);
   assert.equal(summaries.length, 1);

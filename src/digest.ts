@@ -44,6 +44,7 @@ export interface RefreshResult {
   fetched: number;
   newItems: number;
   runId: number | null;
+  newsletterIds: string[];
 }
 
 export interface NewsletterRefresh {
@@ -118,7 +119,8 @@ export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
       // we don't re-fetch them on the next run (dedup is handled by isKnown).
       maxUid = Math.max(maxUid, uid);
 
-      if (archive.isKnown(mail.messageId) || stagedMessageIds.has(mail.messageId)) {
+      const sourceIdentity = { type: 'gmail', externalId: mail.messageId };
+      if (archive.isKnown(sourceIdentity) || stagedMessageIds.has(mail.messageId)) {
         logger.debug({ uid, subject: mail.subject }, 'Pomijam — już znana');
         continue;
       }
@@ -179,7 +181,7 @@ export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
         { fetched: fetched.length, durationMs },
         'Brak nowych newsletterów — zachowuję poprzedni digest',
       );
-      return { fetched: fetched.length, newItems: 0, runId: null };
+      return { fetched: fetched.length, newItems: 0, runId: null, newsletterIds: [] };
     }
 
     logger.info({ newItems: newUids.length }, 'Przetworzono maile, pobieram pogodę i HackerNews…');
@@ -249,7 +251,12 @@ export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
       'Gotowe',
     );
 
-    return { fetched: fetched.length, newItems: newUids.length, runId };
+    return {
+      fetched: fetched.length,
+      newItems: newUids.length,
+      runId,
+      newsletterIds: publishedItems.map((item) => item.id),
+    };
   } catch (err) {
     logger.error(
       { err: errorMessage(err), durationMs: Date.now() - startMs },

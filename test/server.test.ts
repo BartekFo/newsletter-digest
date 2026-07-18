@@ -117,7 +117,7 @@ test('GET / renders latest non-empty run', async () => {
   await withServer({}, async ({ db, baseUrl }) => {
     insertItem(db, ITEM);
     const runId = recordRun(db, { fetched: 1, newItems: 1, durationMs: 10, ok: true });
-    addRunItems(db, runId, [ITEM.messageId]);
+    addRunItems(db, runId, [ITEM.id]);
 
     const response = await fetch(`${baseUrl}/`);
     const html = await response.text();
@@ -153,7 +153,7 @@ test('GET / renders saved weather and HackerNews for latest run', async () => {
         hnUrl: 'https://news.ycombinator.com/item?id=1',
       }],
     });
-    addRunItems(db, runId, [ITEM.messageId]);
+    addRunItems(db, runId, [ITEM.id]);
 
     const response = await fetch(`${baseUrl}/`);
     const html = await response.text();
@@ -261,7 +261,7 @@ test('POST /chat stops waiting for an unresponsive model and logs the timeout', 
 test('POST /refresh invokes the small refresh use-case and redirects to its snapshot', async () => {
   await withServer({
     refresh: {
-      refresh: async () => ({ fetched: 1, newItems: 1, runId: 1 }),
+      refresh: async () => ({ fetched: 1, newItems: 1, runId: 1, newsletterIds: [ITEM.id] }),
     },
   }, async ({ baseUrl }) => {
     const response = await fetch(`${baseUrl}/refresh`, { method: 'POST', redirect: 'manual' });
@@ -274,12 +274,12 @@ test('POST /refresh invokes the small refresh use-case and redirects to its snap
 test('POST /refresh keeps the latest snapshot when no new newsletters are found', async () => {
   await withServer({
     refresh: {
-      refresh: async () => ({ fetched: 0, newItems: 0, runId: null }),
+      refresh: async () => ({ fetched: 0, newItems: 0, runId: null, newsletterIds: [] }),
     },
   }, async ({ db, baseUrl }) => {
     insertItem(db, ITEM);
     const runId = recordRun(db, { fetched: 1, newItems: 1, durationMs: 10, ok: true });
-    addRunItems(db, runId, [ITEM.messageId]);
+    addRunItems(db, runId, [ITEM.id]);
 
     const response = await fetch(`${baseUrl}/refresh`, { method: 'POST', redirect: 'manual' });
 

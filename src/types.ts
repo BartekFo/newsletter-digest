@@ -34,12 +34,7 @@ export interface ParsedMail {
 
 export interface DigestItem {
   id: string;
-  source: {
-    type: string;
-    externalId: string;
-    cursor: string;
-    metadata: Record<string, string | number>;
-  };
+  source: NewsletterSource;
   messageId: string;
   uid: number;
   sender: string;
@@ -50,6 +45,16 @@ export interface DigestItem {
   link: string | null;
   isPaywalled: boolean;
   createdAt?: string;
+}
+
+export interface NewsletterSourceIdentity {
+  type: string;
+  externalId: string;
+}
+
+export interface NewsletterSource extends NewsletterSourceIdentity {
+    cursor: string;
+    metadata: Record<string, string | number>;
 }
 
 export interface WeatherSummary {
