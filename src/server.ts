@@ -4,28 +4,16 @@ import { fileURLToPath } from 'node:url';
 
 import { chatWithArticle, type ChatMessage } from './chatModel.js';
 import { loadConfig } from './config.js';
-import {
-  createNewsletterRefresh,
-  type DigestDeps,
-  type NewsletterRefresh,
-} from './digest.js';
-import { extractText } from './extract.js';
-import { buildDigestEmail, sendDigestEmail } from './email.js';
-import { fetchTopStories } from './hackernews.js';
-import { fetchNewMessages } from './imap.js';
+import type { NewsletterRefresh } from './digest.js';
+import { createApplication } from './composition.js';
 import { createLogger, silentLogger } from './logger.js';
-import { parseMail } from './parse.js';
 import { renderDigestPage, renderRunsPage } from './render.js';
-import { summarize } from './summarize.js';
 import {
   getItemByMessageId,
   getItemsByRunId,
   getLatestNonEmptyRun,
   getRunSummaries,
-  initSchema,
-  openDb,
 } from './store.js';
-import { fetchWeather } from './weather.js';
 import type { AppConfig, AppLogger, Db, DigestItem, RunSummary } from './types.js';
 
 function errorMessage(err: unknown): string {
@@ -126,24 +114,6 @@ export interface ReaderServerDeps {
   refresh?: NewsletterRefresh;
   chatWithArticle?: typeof chatWithArticle;
   chatTimeoutMs?: number;
-  now?: () => Date;
-}
-
-function createDigestDeps(deps: ReaderServerDeps): DigestDeps {
-  return {
-    db: deps.db,
-    config: deps.config,
-    fetchNewMessages,
-    parseMail,
-    extractText,
-    summarize,
-    buildDigestEmail,
-    sendDigestEmail,
-    fetchWeather,
-    fetchTopStories,
-    now: deps.now ?? (() => new Date()),
-    logger: deps.logger ?? silentLogger,
-  };
 }
 
 function renderRun(db: Db, run: RunSummary, config: AppConfig, extras: { notice?: string; error?: string } = {}): string {
@@ -170,7 +140,7 @@ function renderEmpty(config: AppConfig, extras: { notice?: string; error?: strin
 
 export function createReaderServer(deps: ReaderServerDeps): http.Server {
   const logger = deps.logger ?? silentLogger;
-  const refresh = deps.refresh ?? createNewsletterRefresh(createDigestDeps(deps));
+  const refresh = deps.refresh;
   const chat = deps.chatWithArticle ?? chatWithArticle;
   const chatTimeoutMs = deps.chatTimeoutMs ?? CHAT_TIMEOUT_MS;
 
@@ -209,6 +179,7 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
 
       if (req.method === 'POST' && url.pathname === '/refresh') {
         try {
+          if (!refresh) throw new Error('Newsletter refresh is not configured.');
           const result = await refresh.refresh();
           if (result.runId != null) {
             redirect(res, `/runs/${result.runId}?notice=${encodeURIComponent('Pobrano nowe newslettery.')}`);
@@ -302,8 +273,8 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
 }
 
 async function runStartupRefresh(deps: ReaderServerDeps): Promise<void> {
-  const refresh = deps.refresh ?? createNewsletterRefresh(createDigestDeps(deps));
-  await refresh.refresh();
+  if (!deps.refresh) throw new Error('Newsletter refresh is not configured.');
+  await deps.refresh.refresh();
 }
 
 /** True when startup should skip IMAP fetch and just serve saved digests. */
@@ -326,12 +297,12 @@ if (isMain) {
     }
 
     const logger = createLogger(config.logLevel);
-    const db = openDb(config.dbPath);
-    initSchema(db);
+    const application = createApplication(config, logger);
+    const { db } = application;
 
     const port = Number(process.env.PORT ?? '3789');
     const skipRefresh = shouldSkipStartupRefresh();
-    const server = createReaderServer({ db, config, logger });
+    const server = createReaderServer(application);
 
     server.listen(port, '127.0.0.1', async () => {
       const url = `http://localhost:${port}`;
@@ -339,7 +310,7 @@ if (isMain) {
 
       if (!skipRefresh) {
         try {
-          await runStartupRefresh({ db, config, logger });
+          await runStartupRefresh(application);
         } catch (err) {
           logger.error({ err: errorMessage(err) }, 'Startowe pobieranie nieudane');
         }

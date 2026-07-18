@@ -1,24 +1,11 @@
-import { execFile } from 'node:child_process';
-import { writeFile as fsWriteFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 import { loadConfig } from './config.js';
 import { createLogger, silentLogger } from './logger.js';
-import { fetchNewMessages } from './imap.js';
-import { parseMail } from './parse.js';
-import { extractText } from './extract.js';
 import {
-  buildDigestEmail,
-  sendDigestEmail,
   type DigestEmailMessage,
 } from './email.js';
-import { summarize } from './summarize.js';
-import { renderHtml } from './render.js';
-import { fetchWeather } from './weather.js';
-import { fetchTopStories } from './hackernews.js';
 import {
-  openDb,
-  initSchema,
   getLastUid,
   isKnown,
   recordRun,
@@ -39,18 +26,6 @@ import type {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-/**
- * Open a file in the system's default application.
- * No-op on non-macOS platforms or when path is absent.
- * @param {string} filePath
- * @returns {Promise<void>}
- */
-function openFile(filePath: string): Promise<void> {
-  return new Promise<void>((resolve) => {
-    execFile('open', [filePath], () => resolve());
-  });
 }
 
 export interface DigestDeps {
@@ -305,30 +280,19 @@ if (isMain) {
     }
 
     const logger = createLogger(config.logLevel);
-    const db = openDb(config.dbPath);
-    initSchema(db);
+    const { createApplication } = await import('./composition.js');
+    const application = createApplication(config, logger, {
+      staticExport: true,
+      openStaticExport: true,
+    });
 
     try {
-      await createNewsletterRefresh({
-        db,
-        config,
-        fetchNewMessages,
-        parseMail,
-        extractText,
-        summarize,
-        renderHtml,
-        buildDigestEmail,
-        sendDigestEmail,
-        fetchWeather,
-        fetchTopStories,
-        writeFile: (path: string, content: string) => fsWriteFile(path, content, 'utf8'),
-        openFile,
-        now: () => new Date(),
-        logger,
-      }).refresh();
+      await application.refresh.refresh();
     } catch {
       // runDigest already logged the failure; just set the exit code.
       process.exitCode = 1;
+    } finally {
+      application.db.close();
     }
   })();
 }
