@@ -1,6 +1,146 @@
 import { escapeHtml, gmailMessageUrl, safeUrl } from './renderUtils.js';
 import type { DigestItem, DigestMeta, HackerNewsStory, RunSummary, WeatherSummary } from './types.js';
 
+const THEME_CSS = `
+  :root {
+    color-scheme: light;
+    --bg: #f7f5f0;
+    --surface: #ffffff;
+    --ink: #1b1a17;
+    --ink-soft: #4a463e;
+    --muted: #8a8478;
+    --line: #e4e0d6;
+    --line-strong: #d3cebf;
+    --link: #2f5d50;
+    --link-hover: #1d3d34;
+    --hn: #ff6600;
+    --on-accent: #ffffff;
+    --notice-bg: #eef6f1;
+    --notice-border: #b8d8c8;
+    --notice-ink: #24483b;
+    --error-bg: #fff1f0;
+    --error-border: #e6b8b2;
+    --error-ink: #7f1d1d;
+    --paid-bg: #fff4ec;
+    --paid-border: #d69b74;
+    --paid-ink: #8a3f18;
+    --user-bg: #edf3ff;
+    --user-ink: #19304f;
+    --temperature-high: #b4532a;
+    --overlay: rgba(27, 26, 23, .42);
+    --shadow: 0 1px 2px rgba(27,26,23,.04), 0 6px 24px rgba(27,26,23,.05);
+    --modal-shadow: 0 24px 80px rgba(27,26,23,.22);
+    --serif: Georgia, "Times New Roman", "Noto Serif", serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #111512;
+    --surface: #1a201c;
+    --ink: #f2efe8;
+    --ink-soft: #cec8bc;
+    --muted: #a39d91;
+    --line: #303832;
+    --line-strong: #49534b;
+    --link: #8bc2ae;
+    --link-hover: #b1dbc9;
+    --hn: #ff7b29;
+    --on-accent: #102019;
+    --notice-bg: #17271f;
+    --notice-border: #3c6652;
+    --notice-ink: #bce4cf;
+    --error-bg: #301b1c;
+    --error-border: #714041;
+    --error-ink: #f3b9b5;
+    --paid-bg: #322219;
+    --paid-border: #8c5b3c;
+    --paid-ink: #f2b88e;
+    --user-bg: #1b3043;
+    --user-ink: #c9e2fa;
+    --temperature-high: #e18c65;
+    --overlay: rgba(0, 0, 0, .68);
+    --shadow: 0 1px 2px rgba(0,0,0,.28), 0 8px 28px rgba(0,0,0,.22);
+    --modal-shadow: 0 24px 80px rgba(0,0,0,.58);
+  }
+
+  .theme-toggle-icon { font-size: 16px; line-height: 1; margin-right: 7px; }
+
+  :where(a, button, textarea):focus-visible {
+    outline: 3px solid var(--link);
+    outline-offset: 2px;
+  }`;
+
+const THEME_BOOT_SCRIPT = `<script>
+(() => {
+  function getSavedTheme() {
+    try {
+      const value = localStorage.getItem('newsletter-digest-theme');
+      return value === 'dark' || value === 'light' ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function getSystemTheme() {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+
+  function applyTheme(nextTheme, persist = false) {
+    document.documentElement.dataset.theme = nextTheme;
+    if (!persist) return;
+    try {
+      localStorage.setItem('newsletter-digest-theme', nextTheme);
+    } catch {}
+  }
+
+  window.newsletterDigestTheme = { getSavedTheme, getSystemTheme, applyTheme };
+  applyTheme(getSavedTheme() ?? getSystemTheme());
+})();
+</script>`;
+
+function renderThemeToggle(): string {
+  return `<button type="button" id="theme-toggle" aria-label="Włącz ciemny motyw" aria-pressed="false">
+        <span class="theme-toggle-icon" aria-hidden="true">☾</span>
+        <span class="theme-toggle-label">Ciemny motyw</span>
+      </button>`;
+}
+
+const THEME_TOGGLE_SCRIPT = `<script>
+(() => {
+  const toggle = document.getElementById('theme-toggle');
+  if (!toggle) return;
+  const icon = toggle.querySelector('.theme-toggle-icon');
+  const label = toggle.querySelector('.theme-toggle-label');
+  const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+  const themeControl = window.newsletterDigestTheme;
+  if (!themeControl) return;
+
+  function updateToggle(theme) {
+    const dark = theme === 'dark';
+    toggle.setAttribute('aria-pressed', String(dark));
+    toggle.setAttribute('aria-label', dark ? 'Włącz jasny motyw' : 'Włącz ciemny motyw');
+    icon.textContent = dark ? '☀' : '☾';
+    label.textContent = dark ? 'Jasny motyw' : 'Ciemny motyw';
+  }
+
+  updateToggle(document.documentElement.dataset.theme);
+
+  toggle.addEventListener('click', () => {
+    const nextTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    themeControl.applyTheme(nextTheme, true);
+    updateToggle(nextTheme);
+  });
+
+  mediaQuery.addEventListener('change', (event) => {
+    if (themeControl.getSavedTheme()) return;
+    const nextTheme = event.matches ? 'dark' : 'light';
+    themeControl.applyTheme(nextTheme);
+    updateToggle(nextTheme);
+  });
+})();
+</script>`;
+
 function formatDate(iso: string): string {
   try {
     return new Date(iso).toLocaleString('pl-PL', { timeZone: 'Europe/Warsaw' });
@@ -159,22 +299,9 @@ ${sorted.map(item => {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Newsletter Digest</title>
+${THEME_BOOT_SCRIPT}
 <style>
-  :root {
-    --bg: #f7f5f0;
-    --surface: #ffffff;
-    --ink: #1b1a17;
-    --ink-soft: #4a463e;
-    --muted: #8a8478;
-    --line: #e4e0d6;
-    --line-strong: #d3cebf;
-    --link: #2f5d50;
-    --link-hover: #1d3d34;
-    --hn: #ff6600;
-    --shadow: 0 1px 2px rgba(27,26,23,.04), 0 6px 24px rgba(27,26,23,.05);
-    --serif: Georgia, "Times New Roman", "Noto Serif", serif;
-    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  }
+${THEME_CSS}
 
   * { box-sizing: border-box; }
 
@@ -260,16 +387,16 @@ ${sorted.map(item => {
   .notice {
     margin-top: 18px;
     padding: 12px 14px;
-    background: #eef6f1;
-    border: 1px solid #b8d8c8;
+    background: var(--notice-bg);
+    border: 1px solid var(--notice-border);
     border-radius: 8px;
-    color: #24483b;
+    color: var(--notice-ink);
     font-size: 14px;
   }
   .notice.error {
-    background: #fff1f0;
-    border-color: #e6b8b2;
-    color: #7f1d1d;
+    background: var(--error-bg);
+    border-color: var(--error-border);
+    color: var(--error-ink);
   }
 
   /* ---------- WEATHER ---------- */
@@ -311,7 +438,7 @@ ${sorted.map(item => {
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.01em;
   }
-  .weather .w-chip .hi { color: #b4532a; font-weight: 600; }
+  .weather .w-chip .hi { color: var(--temperature-high); font-weight: 600; }
   .weather .w-chip .lo { color: var(--link); font-weight: 600; }
 
   /* ---------- SECTION LABEL ---------- */
@@ -386,10 +513,10 @@ ${sorted.map(item => {
     align-items: center;
     min-height: 22px;
     padding: 0 8px;
-    border: 1px solid #d69b74;
+    border: 1px solid var(--paid-border);
     border-radius: 6px;
-    background: #fff4ec;
-    color: #8a3f18;
+    background: var(--paid-bg);
+    color: var(--paid-ink);
     font-size: 12px;
     font-weight: 800;
     line-height: 1;
@@ -447,7 +574,7 @@ ${sorted.map(item => {
     justify-content: center;
     width: 20px; height: 20px;
     background: var(--hn);
-    color: #fff;
+    color: var(--on-accent);
     font-weight: 700;
     font-size: 13px;
     border-radius: 4px;
@@ -522,7 +649,7 @@ ${sorted.map(item => {
     position: fixed;
     inset: 0;
     z-index: 20;
-    background: rgba(27, 26, 23, .42);
+    background: var(--overlay);
     display: flex;
     align-items: flex-end;
     justify-content: center;
@@ -534,7 +661,7 @@ ${sorted.map(item => {
     background: var(--surface);
     border: 1px solid var(--line-strong);
     border-radius: 8px;
-    box-shadow: 0 24px 80px rgba(27,26,23,.22);
+    box-shadow: var(--modal-shadow);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -584,8 +711,8 @@ ${sorted.map(item => {
   .chat-message.user {
     align-self: flex-end;
     max-width: 82%;
-    background: #edf3ff;
-    color: #19304f;
+    background: var(--user-bg);
+    color: var(--user-ink);
   }
   .chat-message.assistant {
     align-self: flex-start;
@@ -595,8 +722,8 @@ ${sorted.map(item => {
   }
   .chat-message.error {
     align-self: stretch;
-    background: #fff1f0;
-    color: #7f1d1d;
+    background: var(--error-bg);
+    color: var(--error-ink);
   }
   .chat-message.loading {
     align-self: flex-start;
@@ -617,6 +744,8 @@ ${sorted.map(item => {
     max-height: 140px;
     border: 1px solid var(--line-strong);
     border-radius: 8px;
+    background: var(--surface);
+    color: var(--ink);
     padding: 10px 12px;
     font: 15px/1.4 var(--sans);
   }
@@ -625,7 +754,7 @@ ${sorted.map(item => {
     border: 1px solid var(--link);
     border-radius: 8px;
     background: var(--link);
-    color: #fff;
+    color: var(--on-accent);
     cursor: pointer;
     font: 700 14px/1 var(--sans);
     padding: 0 16px;
@@ -661,6 +790,7 @@ ${sorted.map(item => {
       <a href="/">Najnowszy</a>
       <a href="/runs">Historia</a>
       <form method="post" action="/refresh"><button type="submit">Pobierz nowe</button></form>
+      ${renderThemeToggle()}
     </nav>
     ${renderNotice(meta)}
   </header>
@@ -781,6 +911,7 @@ ${renderHackerNews(meta.hackernews)}
   });
 })();
 </script>
+${THEME_TOGGLE_SCRIPT}
 </body>
 </html>`;
 }
@@ -807,18 +938,9 @@ ${runs.map((run) => `
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Historia digestów</title>
+${THEME_BOOT_SCRIPT}
 <style>
-  :root {
-    --bg: #f7f5f0;
-    --surface: #ffffff;
-    --ink: #1b1a17;
-    --muted: #8a8478;
-    --line: #e4e0d6;
-    --line-strong: #d3cebf;
-    --link: #2f5d50;
-    --serif: Georgia, "Times New Roman", "Noto Serif", serif;
-    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  }
+${THEME_CSS}
   * { box-sizing: border-box; }
   body {
     margin: 0;
@@ -846,16 +968,17 @@ ${runs.map((run) => `
     align-items: center;
   }
   nav form { margin: 0; }
+  nav a:hover, nav button:hover { border-color: var(--link); color: var(--link); }
   .notice {
     margin-top: 18px;
     padding: 12px 14px;
-    background: #eef6f1;
-    border: 1px solid #b8d8c8;
+    background: var(--notice-bg);
+    border: 1px solid var(--notice-border);
     border-radius: 8px;
-    color: #24483b;
+    color: var(--notice-ink);
     font-size: 14px;
   }
-  .notice.error { background: #fff1f0; border-color: #e6b8b2; color: #7f1d1d; }
+  .notice.error { background: var(--error-bg); border-color: var(--error-border); color: var(--error-ink); }
   .runs-list {
     list-style: none;
     padding: 0;
@@ -900,12 +1023,14 @@ ${runs.map((run) => `
     <nav aria-label="Nawigacja">
       <a href="/">Najnowszy</a>
       <form method="post" action="/refresh"><button type="submit">Pobierz nowe</button></form>
+      ${renderThemeToggle()}
     </nav>
     ${meta.error ? `<div class="notice error">${escapeHtml(meta.error)}</div>` : ''}
     ${meta.notice ? `<div class="notice">${escapeHtml(meta.notice)}</div>` : ''}
   </header>
   <main>${rows}</main>
 </div>
+${THEME_TOGGLE_SCRIPT}
 </body>
 </html>`;
 }

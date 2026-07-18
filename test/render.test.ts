@@ -296,3 +296,19 @@ test('runs page empty state does not crash', () => {
   assert.ok(html.includes('<!DOCTYPE html>'), 'not a valid HTML doc');
   assert.ok(html.includes('Brak zapisanych digestów'), 'empty state missing');
 });
+
+test('digest and runs pages support a persistent dark theme', () => {
+  const pages = [
+    renderHtml([ITEM_A], META),
+    renderRunsPage([]),
+  ];
+
+  for (const html of pages) {
+    assert.ok(html.includes('prefers-color-scheme: dark'), 'system theme detection missing');
+    assert.ok(html.includes("localStorage.getItem('newsletter-digest-theme')"), 'saved theme lookup missing');
+    assert.ok(html.includes("localStorage.setItem('newsletter-digest-theme', nextTheme)"), 'theme persistence missing');
+    assert.ok(html.includes(':root[data-theme="dark"]'), 'dark color palette missing');
+    assert.ok(html.includes('id="theme-toggle"'), 'theme toggle missing');
+    assert.ok(html.includes('aria-pressed="false"'), 'theme toggle state missing');
+  }
+});
