@@ -1,6 +1,15 @@
 import { simpleParser } from 'mailparser';
 import { normalizeArticleUrl } from './link.js';
-import type { ParsedMail } from './types.js';
+
+export interface ParsedMail {
+  messageId: string;
+  sender: string;
+  subject: string;
+  date: string;
+  html: string;
+  link: string | null;
+  isPaywalled: boolean;
+}
 
 const JUNK_LINK_PATTERNS = [
   /unsubscribe/i,

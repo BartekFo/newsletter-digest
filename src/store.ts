@@ -1,21 +1,22 @@
 import Database from 'better-sqlite3';
-import type { Db, DigestItem, HackerNewsStory, NewsletterSourceIdentity, RunSummary, WeatherSummary } from './types.js';
+import type {
+  Db,
+  DigestItem,
+  HackerNewsStory,
+  NewsletterSourceIdentity,
+  RunSummary,
+  WeatherSummary,
+} from './types.js';
 
-interface StateRow {
-  value: string;
-}
-
-interface TableInfoRow {
-  name: string;
-}
+interface StateRow { value: string }
+interface TableInfoRow { name: string }
 
 interface ItemRow {
-  newsletter_id: string | null;
-  source_type: string | null;
-  source_external_id: string | null;
-  source_cursor: string | null;
-  message_id: string;
-  uid: number;
+  newsletter_id: string;
+  source_type: string;
+  source_external_id: string;
+  source_cursor: string;
+  source_metadata_json: string;
   sender: string;
   subject: string;
   date: string;
@@ -46,7 +47,7 @@ export interface RunRecord {
 
 export interface SnapshotPublication {
   items: DigestItem[];
-  cursorUid: number;
+  cursor: string;
   run: RunRecord;
 }
 
@@ -56,7 +57,7 @@ export interface DigestSnapshot {
 }
 
 export interface DigestArchive {
-  getCursor(): number | null;
+  getCursor(): string | null;
   isKnown(source: NewsletterSourceIdentity): boolean;
   publishSnapshot(publication: SnapshotPublication): number;
   recordFailedRefresh(run: RunRecord): void;
@@ -71,172 +72,194 @@ export function openDb(path: string): Db {
   return new Database(path);
 }
 
-export function initSchema(db: Db): void {
+function columns(db: Db, table: string): Set<string> {
+  return new Set((db.prepare(`PRAGMA table_info(${table})`).all() as TableInfoRow[]).map((row) => row.name));
+}
+
+function tableExists(db: Db, table: string): boolean {
+  return db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) !== undefined;
+}
+
+function createFinalItemTables(db: Db): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS items (
-      message_id TEXT PRIMARY KEY,
-      newsletter_id TEXT,
-      source_type TEXT,
-      source_external_id TEXT,
-      source_cursor TEXT,
-      uid        INTEGER,
-      sender     TEXT,
-      subject    TEXT,
-      date       TEXT,
+      newsletter_id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL,
+      source_external_id TEXT NOT NULL,
+      source_cursor TEXT NOT NULL,
+      source_metadata_json TEXT NOT NULL,
+      sender TEXT,
+      subject TEXT,
+      date TEXT,
       clean_text TEXT,
-      summary    TEXT,
-      link       TEXT,
+      summary TEXT,
+      link TEXT,
       is_paywalled INTEGER DEFAULT 0,
       created_at TEXT
     );
-
-    CREATE TABLE IF NOT EXISTS state (
-      key   TEXT PRIMARY KEY,
-      value TEXT
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_items_source_identity
+      ON items(source_type, source_external_id);
+    CREATE TABLE IF NOT EXISTS run_items (
+      run_id INTEGER NOT NULL,
+      newsletter_id TEXT NOT NULL,
+      PRIMARY KEY (run_id, newsletter_id),
+      FOREIGN KEY (run_id) REFERENCES runs(id),
+      FOREIGN KEY (newsletter_id) REFERENCES items(newsletter_id)
     );
+  `);
+}
 
+function migrateLegacyIdentity(db: Db): void {
+  const itemColumns = columns(db, 'items');
+  if (!itemColumns.has('message_id')) return;
+  const hasRunItems = tableExists(db, 'run_items');
+  const runItemColumns = hasRunItems ? columns(db, 'run_items') : new Set<string>();
+  const value = (name: string, fallback: string) => itemColumns.has(name) ? name : fallback;
+
+  db.pragma('foreign_keys = OFF');
+  const migrate = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE items_next (
+        newsletter_id TEXT PRIMARY KEY,
+        source_type TEXT NOT NULL,
+        source_external_id TEXT NOT NULL,
+        source_cursor TEXT NOT NULL,
+        source_metadata_json TEXT NOT NULL,
+        sender TEXT,
+        subject TEXT,
+        date TEXT,
+        clean_text TEXT,
+        summary TEXT,
+        link TEXT,
+        is_paywalled INTEGER DEFAULT 0,
+        created_at TEXT
+      );
+      INSERT INTO items_next (
+        newsletter_id, source_type, source_external_id, source_cursor,
+        source_metadata_json, sender, subject, date, clean_text, summary,
+        link, is_paywalled, created_at
+      )
+      SELECT
+        ${value('newsletter_id', "'newsletter-' || lower(hex(randomblob(16)))")},
+        ${value('source_type', "'gmail'")},
+        ${value('source_external_id', 'message_id')},
+        ${value('source_cursor', 'CAST(uid AS TEXT)')},
+        json_object('gmailMessageId', message_id, 'gmailUid', uid),
+        sender, subject, date, clean_text, summary,
+        ${value('link', 'NULL')}, ${value('is_paywalled', '0')}, created_at
+      FROM items;
+      CREATE TABLE run_items_next (
+        run_id INTEGER NOT NULL,
+        newsletter_id TEXT NOT NULL,
+        PRIMARY KEY (run_id, newsletter_id),
+        FOREIGN KEY (run_id) REFERENCES runs(id),
+        FOREIGN KEY (newsletter_id) REFERENCES items_next(newsletter_id)
+      );
+    `);
+
+    if (hasRunItems) {
+      const newsletterExpression = runItemColumns.has('newsletter_id')
+        ? 'COALESCE(ri.newsletter_id, migrated.newsletter_id)'
+        : 'migrated.newsletter_id';
+      db.exec(`
+        INSERT OR IGNORE INTO run_items_next (run_id, newsletter_id)
+        SELECT ri.run_id, ${newsletterExpression}
+        FROM run_items ri
+        JOIN items_next migrated ON migrated.source_external_id = ri.message_id;
+        DROP TABLE run_items;
+      `);
+    }
+
+    db.exec(`
+      DROP TABLE items;
+      ALTER TABLE items_next RENAME TO items;
+      ALTER TABLE run_items_next RENAME TO run_items;
+    `);
+  });
+
+  migrate();
+  db.pragma('foreign_keys = ON');
+}
+
+export function initSchema(db: Db): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE IF NOT EXISTS runs (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      ran_at      TEXT,
-      fetched     INTEGER,
-      new_items   INTEGER,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ran_at TEXT,
+      fetched INTEGER,
+      new_items INTEGER,
       duration_ms INTEGER,
-      ok          INTEGER,
+      ok INTEGER,
       weather_json TEXT,
       hackernews_json TEXT
     );
-
-    CREATE TABLE IF NOT EXISTS run_items (
-      run_id     INTEGER NOT NULL,
-      message_id TEXT NOT NULL,
-      newsletter_id TEXT,
-      PRIMARY KEY (run_id, message_id),
-      FOREIGN KEY (run_id) REFERENCES runs(id),
-      FOREIGN KEY (message_id) REFERENCES items(message_id)
-    );
   `);
 
-  // Migration: add link column to pre-existing items tables.
-  const cols = db.prepare('PRAGMA table_info(items)').all() as TableInfoRow[];
-  if (!cols.some((c) => c.name === 'link')) {
-    db.exec('ALTER TABLE items ADD COLUMN link TEXT');
-  }
-  if (!cols.some((c) => c.name === 'is_paywalled')) {
-    db.exec('ALTER TABLE items ADD COLUMN is_paywalled INTEGER DEFAULT 0');
-  }
-  if (!cols.some((c) => c.name === 'newsletter_id')) {
-    db.exec('ALTER TABLE items ADD COLUMN newsletter_id TEXT');
-  }
-  if (!cols.some((c) => c.name === 'source_type')) {
-    db.exec('ALTER TABLE items ADD COLUMN source_type TEXT');
-  }
-  if (!cols.some((c) => c.name === 'source_external_id')) {
-    db.exec('ALTER TABLE items ADD COLUMN source_external_id TEXT');
-  }
-  if (!cols.some((c) => c.name === 'source_cursor')) {
-    db.exec('ALTER TABLE items ADD COLUMN source_cursor TEXT');
-  }
+  const runColumns = columns(db, 'runs');
+  if (!runColumns.has('weather_json')) db.exec('ALTER TABLE runs ADD COLUMN weather_json TEXT');
+  if (!runColumns.has('hackernews_json')) db.exec('ALTER TABLE runs ADD COLUMN hackernews_json TEXT');
+
+  if (tableExists(db, 'items')) migrateLegacyIdentity(db);
+  createFinalItemTables(db);
 
   db.exec(`
-    UPDATE items
-    SET newsletter_id = COALESCE(newsletter_id, 'newsletter-' || lower(hex(randomblob(16)))),
-        source_type = COALESCE(source_type, 'gmail'),
-        source_external_id = COALESCE(source_external_id, message_id),
-        source_cursor = COALESCE(source_cursor, CAST(uid AS TEXT));
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_items_newsletter_id ON items(newsletter_id);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_items_source_identity ON items(source_type, source_external_id);
+    INSERT OR IGNORE INTO state (key, value)
+    SELECT 'source_cursor', value FROM state WHERE key = 'last_uid';
+    DELETE FROM state WHERE key = 'last_uid';
   `);
-
-  const runItemCols = db.prepare('PRAGMA table_info(run_items)').all() as TableInfoRow[];
-  if (!runItemCols.some((c) => c.name === 'newsletter_id')) {
-    db.exec('ALTER TABLE run_items ADD COLUMN newsletter_id TEXT');
-  }
-  db.exec(`
-    UPDATE run_items
-    SET newsletter_id = (
-      SELECT items.newsletter_id FROM items WHERE items.message_id = run_items.message_id
-    )
-    WHERE newsletter_id IS NULL;
-    CREATE INDEX IF NOT EXISTS idx_run_items_newsletter_id ON run_items(newsletter_id);
-  `);
-
-  const runCols = db.prepare('PRAGMA table_info(runs)').all() as TableInfoRow[];
-  if (!runCols.some((c) => c.name === 'weather_json')) {
-    db.exec('ALTER TABLE runs ADD COLUMN weather_json TEXT');
-  }
-  if (!runCols.some((c) => c.name === 'hackernews_json')) {
-    db.exec('ALTER TABLE runs ADD COLUMN hackernews_json TEXT');
-  }
 }
 
-export function getLastUid(db: Db): number | null {
-  const row = db.prepare("SELECT value FROM state WHERE key = 'last_uid'").get() as StateRow | undefined;
-  if (!row) return null;
-  return Number(row.value);
+function getCursor(db: Db): string | null {
+  const row = db.prepare("SELECT value FROM state WHERE key = 'source_cursor'").get() as StateRow | undefined;
+  return row?.value ?? null;
 }
 
-export function setLastUid(db: Db, uid: number): void {
-  db.prepare("INSERT OR REPLACE INTO state (key, value) VALUES ('last_uid', ?)").run(String(uid));
+function setCursor(db: Db, cursor: string): void {
+  db.prepare("INSERT OR REPLACE INTO state (key, value) VALUES ('source_cursor', ?)").run(cursor);
 }
 
-export function isKnown(db: Db, messageId: string): boolean {
-  const row = db.prepare('SELECT 1 FROM items WHERE message_id = ?').get(messageId);
-  return row !== undefined;
-}
-
-export function insertItem(db: Db, item: DigestItem): boolean {
-  const { id, source, messageId, uid, sender, subject, date, cleanText, summary, link, isPaywalled } = item;
-  const result = db
-    .prepare(
-      `INSERT OR IGNORE INTO items (message_id, newsletter_id, source_type, source_external_id, source_cursor, uid, sender, subject, date, clean_text, summary, link, is_paywalled, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-    )
-    .run(messageId, id, source.type, source.externalId, source.cursor, uid, sender, subject, date, cleanText, summary ?? null, link ?? null, isPaywalled ? 1 : 0);
+function insertItem(db: Db, item: DigestItem): boolean {
+  const { id, source, sender, subject, date, cleanText, summary, link, isPaywalled } = item;
+  const result = db.prepare(`
+    INSERT OR IGNORE INTO items (
+      newsletter_id, source_type, source_external_id, source_cursor,
+      source_metadata_json, sender, subject, date, clean_text, summary,
+      link, is_paywalled, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  `).run(
+    id, source.type, source.externalId, source.cursor, JSON.stringify(source.metadata),
+    sender, subject, date, cleanText, summary, link, isPaywalled ? 1 : 0,
+  );
   return result.changes === 1;
 }
 
-export function setSummary(db: Db, messageId: string, summary: string): void {
-  db.prepare('UPDATE items SET summary = ? WHERE message_id = ?').run(summary, messageId);
-}
-
-export function recordRun(db: Db, { fetched, newItems, durationMs, ok, weather, hackernews }: RunRecord): number {
-  const result = db
-    .prepare(
-      `INSERT INTO runs (ran_at, fetched, new_items, duration_ms, ok, weather_json, hackernews_json)
-       VALUES (datetime('now'), ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      fetched,
-      newItems,
-      durationMs,
-      ok ? 1 : 0,
-      weather ? JSON.stringify(weather) : null,
-      hackernews ? JSON.stringify(hackernews) : null,
-    );
+function recordRun(db: Db, { fetched, newItems, durationMs, ok, weather, hackernews }: RunRecord): number {
+  const result = db.prepare(`
+    INSERT INTO runs (ran_at, fetched, new_items, duration_ms, ok, weather_json, hackernews_json)
+    VALUES (datetime('now'), ?, ?, ?, ?, ?, ?)
+  `).run(
+    fetched, newItems, durationMs, ok ? 1 : 0,
+    weather ? JSON.stringify(weather) : null,
+    hackernews ? JSON.stringify(hackernews) : null,
+  );
   return Number(result.lastInsertRowid);
 }
 
 function parseJson<T>(value: string | null): T | null {
   if (!value) return null;
-
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return null;
-  }
+  try { return JSON.parse(value) as T; } catch { return null; }
 }
 
 function rowToItem(row: ItemRow): DigestItem {
   return {
-    id: row.newsletter_id ?? `legacy:${row.message_id}`,
+    id: row.newsletter_id,
     source: {
-      type: row.source_type ?? 'gmail',
-      externalId: row.source_external_id ?? row.message_id,
-      cursor: row.source_cursor ?? String(row.uid),
-      metadata: { gmailMessageId: row.message_id, gmailUid: row.uid },
+      type: row.source_type,
+      externalId: row.source_external_id,
+      cursor: row.source_cursor,
+      metadata: parseJson<Record<string, string | number>>(row.source_metadata_json) ?? {},
     },
-    messageId: row.message_id,
-    uid: row.uid,
     sender: row.sender,
     subject: row.subject,
     date: row.date,
@@ -248,56 +271,19 @@ function rowToItem(row: ItemRow): DigestItem {
   };
 }
 
-export function getItemsByUids(db: Db, uids: number[]): DigestItem[] {
-  if (uids.length === 0) return [];
-  const placeholders = uids.map(() => '?').join(', ');
-  const rows = db.prepare(`SELECT * FROM items WHERE uid IN (${placeholders})`).all(...uids) as ItemRow[];
-  return rows.map(rowToItem);
+function addRunItems(db: Db, runId: number, newsletterIds: string[]): void {
+  const insert = db.prepare('INSERT OR IGNORE INTO run_items (run_id, newsletter_id) VALUES (?, ?)');
+  for (const newsletterId of newsletterIds) insert.run(runId, newsletterId);
 }
 
-export function getItemByMessageId(db: Db, messageId: string): DigestItem | null {
-  const row = db.prepare('SELECT * FROM items WHERE message_id = ?').get(messageId) as ItemRow | undefined;
-  return row ? rowToItem(row) : null;
-}
-
-export function getItemByNewsletterId(db: Db, newsletterId: string): DigestItem | null {
-  const row = db.prepare('SELECT * FROM items WHERE newsletter_id = ?').get(newsletterId) as ItemRow | undefined;
-  return row ? rowToItem(row) : null;
-}
-
-export function addRunItems(db: Db, runId: number, newsletterIds: string[]): void {
-  if (newsletterIds.length === 0) return;
-
-  const insert = db.prepare(
-    `INSERT OR IGNORE INTO run_items (run_id, message_id, newsletter_id)
-     SELECT ?, message_id, newsletter_id FROM items WHERE newsletter_id = ?`,
-  );
-  const insertMany = db.transaction((ids: string[]) => {
-    for (const messageId of ids) {
-      insert.run(runId, messageId);
-    }
-  });
-
-  insertMany(newsletterIds);
-}
-
-/**
- * Make a completed refresh visible as one recoverable SQLite state.
- * Items, the run, snapshot relations and the IMAP cursor either all commit or
- * all roll back together.
- */
-export function publishSnapshot(db: Db, publication: SnapshotPublication): number {
-  const publish = db.transaction(({ items, cursorUid, run }: SnapshotPublication) => {
-    for (const item of items) {
-      insertItem(db, item);
-    }
-
+function publishSnapshot(db: Db, publication: SnapshotPublication): number {
+  const publish = db.transaction(({ items, cursor, run }: SnapshotPublication) => {
+    for (const item of items) insertItem(db, item);
     const runId = recordRun(db, run);
     addRunItems(db, runId, items.map((item) => item.id));
-    setLastUid(db, cursorUid);
+    setCursor(db, cursor);
     return runId;
   });
-
   return publish(publication);
 }
 
@@ -312,49 +298,25 @@ function rowToRunSummary(row: RunSummaryRow): RunSummary {
   };
 }
 
-export function getRunSummaries(db: Db): RunSummary[] {
-  const rows = db
-    .prepare(
-      `SELECT r.id, r.ran_at, r.new_items, r.weather_json, r.hackernews_json, COUNT(ri.message_id) AS item_count
-       FROM runs r
-       JOIN run_items ri ON ri.run_id = r.id
-       GROUP BY r.id
-       HAVING item_count > 0
-       ORDER BY r.ran_at DESC, r.id DESC`,
-    )
-    .all() as RunSummaryRow[];
-  return rows.map(rowToRunSummary);
+function getRunSummaries(db: Db): RunSummary[] {
+  return (db.prepare(`
+    SELECT r.id, r.ran_at, r.new_items, r.weather_json, r.hackernews_json,
+           COUNT(ri.newsletter_id) AS item_count
+    FROM runs r JOIN run_items ri ON ri.run_id = r.id
+    GROUP BY r.id HAVING item_count > 0
+    ORDER BY r.ran_at DESC, r.id DESC
+  `).all() as RunSummaryRow[]).map(rowToRunSummary);
 }
 
-export function getLatestNonEmptyRun(db: Db): RunSummary | null {
-  const row = db
-    .prepare(
-      `SELECT r.id, r.ran_at, r.new_items, r.weather_json, r.hackernews_json, COUNT(ri.message_id) AS item_count
-       FROM runs r
-       JOIN run_items ri ON ri.run_id = r.id
-       GROUP BY r.id
-       HAVING item_count > 0
-       ORDER BY r.ran_at DESC, r.id DESC
-       LIMIT 1`,
-    )
-    .get() as RunSummaryRow | undefined;
-  return row ? rowToRunSummary(row) : null;
+function getItemsByRunId(db: Db, runId: number): DigestItem[] {
+  return (db.prepare(`
+    SELECT items.* FROM run_items
+    JOIN items ON items.newsletter_id = run_items.newsletter_id
+    WHERE run_items.run_id = ?
+    ORDER BY datetime(items.date) DESC, items.newsletter_id DESC
+  `).all(runId) as ItemRow[]).map(rowToItem);
 }
 
-export function getItemsByRunId(db: Db, runId: number): DigestItem[] {
-  const rows = db
-    .prepare(
-      `SELECT i.*
-       FROM run_items ri
-       JOIN items i ON i.newsletter_id = ri.newsletter_id
-       WHERE ri.run_id = ?
-       ORDER BY datetime(i.date) DESC, i.uid DESC`,
-    )
-    .all(runId) as ItemRow[];
-  return rows.map(rowToItem);
-}
-
-/** Reader-facing archive interface. SQLite and query composition stay here. */
 export function createDigestArchive(db: Db): DigestArchive {
   const getSnapshot = (runId: number): DigestSnapshot | null => {
     const run = getRunSummaries(db).find((candidate) => candidate.id === runId);
@@ -362,26 +324,26 @@ export function createDigestArchive(db: Db): DigestArchive {
   };
 
   return {
-    getCursor: () => getLastUid(db),
+    getCursor: () => getCursor(db),
     isKnown: (source) => db.prepare(
       'SELECT 1 FROM items WHERE source_type = ? AND source_external_id = ?',
     ).get(source.type, source.externalId) !== undefined,
     publishSnapshot: (publication) => publishSnapshot(db, publication),
     recordFailedRefresh: (run) => { recordRun(db, { ...run, ok: false }); },
     latestSnapshot() {
-      const run = getLatestNonEmptyRun(db);
+      const run = getRunSummaries(db)[0];
       return run ? { run, items: getItemsByRunId(db, run.id) } : null;
     },
     listSnapshots: () => getRunSummaries(db),
     getSnapshot,
-    getNewsletter: (newsletterId) => (
-      getItemByNewsletterId(db, newsletterId) ?? getItemByMessageId(db, newsletterId)
-    ),
+    getNewsletter(newsletterId) {
+      const row = db.prepare('SELECT * FROM items WHERE newsletter_id = ?').get(newsletterId) as ItemRow | undefined;
+      return row ? rowToItem(row) : null;
+    },
     close: () => db.close(),
   };
 }
 
-/** Open, migrate and own a SQLite-backed archive without exposing its handle. */
 export function openDigestArchive(path: string): DigestArchive {
   const db = openDb(path);
   initSchema(db);

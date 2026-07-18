@@ -5,14 +5,9 @@ import {
   createDigestArchive,
   openDb,
   initSchema,
-  getLastUid,
-  getItemsByRunId,
-  getItemsByUids,
-  getRunSummaries,
-  isKnown,
 } from '../src/store.js';
 import { renderDigestPage } from '../src/render.js';
-import { runDigest, type DigestDeps } from '../src/digest.js';
+import { createNewsletterRefresh, type DigestDeps, type RefreshResult } from '../src/digest.js';
 import type { DigestEmailMessage } from '../src/email.js';
 import type { Db } from '../src/types.js';
 import {
@@ -58,6 +53,10 @@ interface DigestTestControls {
 
 type TestDigestDeps = DigestDeps & DigestTestControls;
 
+function runDigest(deps: DigestDeps): Promise<RefreshResult> {
+  return createNewsletterRefresh(deps).refresh();
+}
+
 function assertRefreshSummary(
   result: Awaited<ReturnType<typeof runDigest>>,
   expected: { fetched: number; newItems: number; runId: number | null },
@@ -78,12 +77,27 @@ function makeDeps(db: Db, overrides: Partial<DigestDeps> = {}): TestDigestDeps {
   const deps: TestDigestDeps = {
     archive: createDigestArchive(db),
     config: buildAppConfig(),
-    fetchNewMessages: async () => FAKE_MAILS.map((mail) => mail.message),
-    parseMail: async (raw) => {
-      const str = raw.toString();
-      const match = FAKE_MAILS.find((mail) => mail.message.raw.toString() === str);
-      if (!match) throw new Error(`parseMail: unknown raw: ${str}`);
-      return { ...match.parsed };
+    source: {
+      fetch: async () => ({
+        newsletters: FAKE_MAILS.map((mail) => ({
+          source: {
+            type: 'gmail',
+            externalId: mail.parsed.messageId,
+            cursor: String(mail.message.uid),
+            metadata: {
+              gmailMessageId: mail.parsed.messageId,
+              gmailUid: mail.message.uid,
+            },
+          },
+          sender: mail.parsed.sender,
+          subject: mail.parsed.subject,
+          date: mail.parsed.date,
+          html: mail.parsed.html,
+          link: mail.parsed.link,
+          isPaywalled: mail.parsed.isPaywalled,
+        })),
+        cursor: '102',
+      }),
     },
     extractText: async (html) => {
       const match = FAKE_MAILS.find((m) => m.parsed.html === html);
@@ -165,17 +179,17 @@ describe('runDigest', () => {
     await runDigest(deps);
 
     for (const mail of FAKE_MAILS) {
-      assert.equal(isKnown(db, mail.parsed.messageId), true, `isKnown(${mail.parsed.messageId})`);
+      assert.equal(deps.archive.isKnown({ type: 'gmail', externalId: mail.parsed.messageId }), true);
     }
 
-    const items = getItemsByUids(db, [101, 102]);
+    const items = deps.archive.latestSnapshot()?.items ?? [];
     assert.equal(items.length, 2);
 
     for (const item of items) {
-      const expected = FAKE_MAILS.find((mail) => mail.message.uid === item.uid);
-      assert.ok(expected, `fixture for uid ${item.uid}`);
-      assert.equal(item.summary, expected.summary, `summary for uid ${item.uid}`);
-      assert.equal(item.isPaywalled, expected.parsed.isPaywalled, `isPaywalled for uid ${item.uid}`);
+      const expected = FAKE_MAILS.find((mail) => String(mail.message.uid) === item.source.cursor);
+      assert.ok(expected, `fixture for source cursor ${item.source.cursor}`);
+      assert.equal(item.summary, expected.summary);
+      assert.equal(item.isPaywalled, expected.parsed.isPaywalled);
     }
   });
 
@@ -229,11 +243,11 @@ describe('runDigest', () => {
     assertRefreshSummary(result, { fetched: 2, newItems: 2, runId: 1 });
   });
 
-  it('advances the UID cursor to the max uid after success', async () => {
+  it('advances the source cursor after success', async () => {
     const deps = makeDeps(db);
     await runDigest(deps);
 
-    assert.equal(getLastUid(db), 102);
+    assert.equal(deps.archive.getCursor(), '102');
   });
 
   it('records a run row with ok=1', async () => {
@@ -273,9 +287,9 @@ describe('runDigest', () => {
 
     const runId = result.runId;
     assert.ok(runId !== null);
-    const items = getItemsByRunId(db, runId);
+    const items = deps.archive.getSnapshot(runId)?.items ?? [];
     assert.equal(items.length, 2);
-    assert.deepEqual(items.map((item) => item.messageId).sort(), ['msg-001@test', 'msg-002@test']);
+    assert.deepEqual(items.map((item) => item.source.externalId).sort(), ['msg-001@test', 'msg-002@test']);
   });
 
   it('recovers every newsletter after snapshot publication fails atomically', async () => {
@@ -292,18 +306,18 @@ describe('runDigest', () => {
       /simulated publication failure/,
     );
 
-    assert.equal(getLastUid(db), null, 'cursor must remain at the last recoverable snapshot');
-    assert.equal(getItemsByUids(db, [101, 102]).length, 0, 'unpublished items must roll back');
-    assert.deepEqual(getRunSummaries(db), [], 'failed publication must not become visible');
+    const failedArchive = createDigestArchive(db);
+    assert.equal(failedArchive.getCursor(), null, 'cursor must remain at the last recoverable snapshot');
+    assert.equal(failedArchive.latestSnapshot(), null, 'failed publication must not become visible');
 
     db.exec('DROP TRIGGER fail_snapshot_publication');
     const recovered = await runDigest(makeDeps(db));
 
     assert.equal(recovered.newItems, 2);
     assert.ok(recovered.runId !== null);
-    assert.equal(getLastUid(db), 102);
+    assert.equal(makeDeps(db).archive.getCursor(), '102');
     assert.deepEqual(
-      getItemsByRunId(db, recovered.runId).map((item) => item.messageId).sort(),
+      makeDeps(db).archive.getSnapshot(recovered.runId)?.items.map((item) => item.source.externalId).sort(),
       ['msg-001@test', 'msg-002@test'],
     );
   });
@@ -356,7 +370,7 @@ describe('runDigest', () => {
     const result = await runDigest(deps);
 
     assert.ok(result.runId !== null);
-    assert.equal(getItemsByRunId(db, result.runId).length, 2);
+    assert.equal(deps.archive.getSnapshot(result.runId)?.items.length, 2);
     assert.equal(deps._sendEmailCalls(), 1, 'email delivery should be independent from export');
     assert.equal(deps._openFileCalled(), false, 'a missing export must not be opened');
     const run = db.prepare('SELECT ok FROM runs WHERE id = ?').get(result.runId) as { ok: number };
@@ -431,11 +445,11 @@ describe('runDigest', () => {
 
       await runDigest(deps);
 
-      const items = getItemsByUids(db, [101, 102]);
+      const items = deps.archive.latestSnapshot()?.items ?? [];
       assert.equal(items.length, 2);
 
-      const first = items.find((i) => i.uid === 101);
-      const second = items.find((i) => i.uid === 102);
+      const first = items.find((i) => i.source.cursor === '101');
+      const second = items.find((i) => i.source.cursor === '102');
       assert.ok(first);
       assert.ok(second);
       assert.equal(first.summary, FAKE_MAILS[0].summary);
@@ -458,7 +472,7 @@ describe('runDigest', () => {
 
       await runDigest(deps);
 
-      assert.equal(getLastUid(db), 102);
+      assert.equal(deps.archive.getCursor(), '102');
     });
   });
 });

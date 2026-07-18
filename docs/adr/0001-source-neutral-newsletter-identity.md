@@ -20,6 +20,8 @@ The migration follows expand–migrate–contract:
 
 Existing snapshot relations are backfilled during schema initialization. Internal IDs are opaque and must not encode Gmail semantics.
 
+The final schema uses `newsletter_id` as the item and snapshot relation key. The source adapter returns a generic string cursor and generic metadata; only `GmailSourceAdapter` interprets IMAP UIDs, RFC822 message IDs and Gmail deep-link formatting.
+
 ## Consequences
 
 - Gmail remains the only source in the current scope.

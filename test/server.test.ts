@@ -7,8 +7,7 @@ import {
   shouldSkipStartupRefresh,
   type ReaderServerDeps,
 } from '../src/server.js';
-import { addRunItems, createDigestArchive, initSchema, insertItem, openDb, recordRun } from '../src/store.js';
-import type { Db } from '../src/types.js';
+import { createDigestArchive, initSchema, openDb, type DigestArchive, type RunRecord } from '../src/store.js';
 import { buildAppConfig, buildDigestItem } from './builders.js';
 
 const CONFIG = buildAppConfig({
@@ -18,8 +17,8 @@ const CONFIG = buildAppConfig({
 });
 
 const ITEM = buildDigestItem({
-  messageId: '<chat@test>',
-  uid: 1,
+  id: 'newsletter-chat',
+  source: { type: 'gmail', externalId: '<chat@test>', cursor: '1', metadata: { gmailMessageId: '<chat@test>', gmailUid: 1 } },
   sender: 'News <news@example.com>',
   subject: 'Chat Newsletter',
   date: '2026-07-02T08:00:00.000Z',
@@ -32,7 +31,7 @@ const ITEM = buildDigestItem({
 type ServerOptions = Omit<ReaderServerDeps, 'archive' | 'config'>;
 
 interface ServerContext {
-  db: Db;
+  archive: DigestArchive;
   baseUrl: string;
 }
 
@@ -55,9 +54,10 @@ function postChat(baseUrl: string, body: unknown): Promise<Response> {
 async function withServer(options: ServerOptions, fn: ServerCallback): Promise<void> {
   const db = openDb(':memory:');
   initSchema(db);
+  const archive = createDigestArchive(db);
 
   const server = createReaderServer({
-    archive: createDigestArchive(db),
+    archive,
     config: CONFIG,
     chatWithArticle: async () => 'Test answer',
     ...options,
@@ -77,13 +77,21 @@ async function withServer(options: ServerOptions, fn: ServerCallback): Promise<v
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
   try {
-    await fn({ db, baseUrl });
+    await fn({ archive, baseUrl });
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());
     });
-    db.close();
+    archive.close();
   }
+}
+
+function publishItem(archive: DigestArchive, run: Partial<RunRecord> = {}): number {
+  return archive.publishSnapshot({
+    items: [ITEM],
+    cursor: ITEM.source.cursor,
+    run: { fetched: 1, newItems: 1, durationMs: 10, ok: true, ...run },
+  });
 }
 
 test('shouldSkipStartupRefresh reads --no-refresh and --open', () => {
@@ -114,10 +122,8 @@ test('GET /runs/:id for missing run returns 404', async () => {
 });
 
 test('GET / renders latest non-empty run', async () => {
-  await withServer({}, async ({ db, baseUrl }) => {
-    insertItem(db, ITEM);
-    const runId = recordRun(db, { fetched: 1, newItems: 1, durationMs: 10, ok: true });
-    addRunItems(db, runId, [ITEM.id]);
+  await withServer({}, async ({ archive, baseUrl }) => {
+    publishItem(archive);
 
     const response = await fetch(`${baseUrl}/`);
     const html = await response.text();
@@ -129,13 +135,8 @@ test('GET / renders latest non-empty run', async () => {
 });
 
 test('GET / renders saved weather and HackerNews for latest run', async () => {
-  await withServer({}, async ({ db, baseUrl }) => {
-    insertItem(db, ITEM);
-    const runId = recordRun(db, {
-      fetched: 1,
-      newItems: 1,
-      durationMs: 10,
-      ok: true,
+  await withServer({}, async ({ archive, baseUrl }) => {
+    publishItem(archive, {
       weather: {
         city: 'Testowo',
         temp: 12,
@@ -153,7 +154,6 @@ test('GET / renders saved weather and HackerNews for latest run', async () => {
         hnUrl: 'https://news.ycombinator.com/item?id=1',
       }],
     });
-    addRunItems(db, runId, [ITEM.id]);
 
     const response = await fetch(`${baseUrl}/`);
     const html = await response.text();
@@ -206,8 +206,8 @@ test('POST /chat for known item returns answer JSON', async () => {
       captured.push(params);
       return 'Answer from fake model';
     },
-  }, async ({ db, baseUrl }) => {
-    insertItem(db, ITEM);
+  }, async ({ archive, baseUrl }) => {
+    publishItem(archive);
 
     const response = await postChat(baseUrl, {
       newsletterId: ITEM.id,
@@ -241,8 +241,8 @@ test('POST /chat stops waiting for an unresponsive model and logs the timeout', 
     logger,
     chatTimeoutMs: 10,
     chatWithArticle: async () => new Promise(() => {}),
-  }, async ({ db, baseUrl }) => {
-    insertItem(db, ITEM);
+  }, async ({ archive, baseUrl }) => {
+    publishItem(archive);
 
     const response = await postChat(baseUrl, {
       newsletterId: ITEM.id,
@@ -276,10 +276,8 @@ test('POST /refresh keeps the latest snapshot when no new newsletters are found'
     refresh: {
       refresh: async () => ({ fetched: 0, newItems: 0, runId: null, newsletterIds: [] }),
     },
-  }, async ({ db, baseUrl }) => {
-    insertItem(db, ITEM);
-    const runId = recordRun(db, { fetched: 1, newItems: 1, durationMs: 10, ok: true });
-    addRunItems(db, runId, [ITEM.id]);
+  }, async ({ archive, baseUrl }) => {
+    publishItem(archive);
 
     const response = await fetch(`${baseUrl}/refresh`, { method: 'POST', redirect: 'manual' });
 

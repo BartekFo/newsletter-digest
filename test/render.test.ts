@@ -10,8 +10,8 @@ import type {
 import { buildDigestItem } from './builders.js';
 
 const ITEM_A = buildDigestItem({
-  messageId: '<a@test>',
-  uid: 1,
+  id: 'newsletter-a',
+  source: { type: 'gmail', externalId: '<a@test>', cursor: '1', metadata: { gmailMessageId: '<a@test>', gmailUid: 1 } },
   sender: 'Alice <alice@example.com>',
   subject: 'Newsletter January',
   date: '2024-01-15T10:00:00.000Z',
@@ -21,8 +21,8 @@ const ITEM_A = buildDigestItem({
 });
 
 const ITEM_B = buildDigestItem({
-  messageId: '<b@test>',
-  uid: 2,
+  id: 'newsletter-b',
+  source: { type: 'gmail', externalId: '<b@test>', cursor: '2', metadata: { gmailMessageId: '<b@test>', gmailUid: 2 } },
   sender: 'Bob <bob@example.com>',
   subject: 'Newsletter February',
   date: '2024-02-20T10:00:00.000Z',

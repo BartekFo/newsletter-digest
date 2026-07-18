@@ -1,5 +1,6 @@
 import { renderBrowserChatScript } from './browserChat.js';
-import { escapeHtml, gmailMessageIdFromMetadata, gmailMessageUrl, safeUrl } from './renderUtils.js';
+import { gmailMessageIdFromMetadata, gmailMessageUrl } from './gmailSource.js';
+import { escapeHtml, safeUrl } from './renderUtils.js';
 import type { DigestItem, DigestMeta, HackerNewsStory, RunSummary, WeatherSummary } from './types.js';
 
 const THEME_CSS = `
@@ -338,7 +339,7 @@ ${list}
 /**
  * Renders a list of digest items into a standalone HTML document string.
  *
- * @param {Array<{messageId: string, uid: number, sender: string, subject: string, date: string, cleanText: string, summary: string|null}>} items
+ * @param {DigestItem[]} items
  * @param {{ranAt: string, newCount: number, weather?: object|null, hackernews?: object[]|null}} meta
  * @returns {string} Full HTML document
  */

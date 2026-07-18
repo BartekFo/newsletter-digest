@@ -5,8 +5,7 @@ import { createNewsletterRefresh, type DigestDeps, type NewsletterRefresh } from
 import { buildDigestEmail, sendDigestEmail } from './email.js';
 import { extractText } from './extract.js';
 import { fetchTopStories } from './hackernews.js';
-import { fetchNewMessages } from './imap.js';
-import { parseMail } from './parse.js';
+import { createGmailSourceAdapter } from './gmailSource.js';
 import { renderDigestPage } from './render.js';
 import { openDigestArchive, type DigestArchive } from './store.js';
 import { summarize } from './summarize.js';
@@ -48,8 +47,7 @@ export function createApplication(
   const refreshDeps: DigestDeps = {
     archive,
     config,
-    fetchNewMessages,
-    parseMail,
+    source: createGmailSourceAdapter(config),
     extractText,
     summarize,
     buildDigestEmail,

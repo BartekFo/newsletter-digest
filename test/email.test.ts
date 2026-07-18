@@ -13,8 +13,7 @@ import { buildDigestItem } from './builders.js';
 const ITEMS = [
   buildDigestItem({
     id: 'newsletter-email-test',
-    messageId: '<digest@example.com>',
-    uid: 7,
+    source: { type: 'gmail', externalId: '<digest@example.com>', cursor: '7', metadata: { gmailMessageId: '<digest@example.com>', gmailUid: 7 } },
     sender: 'Example Newsletter <hello@example.com>',
     subject: 'A useful article',
     date: '2026-07-18T08:30:00.000Z',

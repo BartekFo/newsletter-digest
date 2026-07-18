@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 
-import { escapeHtml, gmailMessageIdFromMetadata, gmailMessageUrl, safeUrl } from './renderUtils.js';
+import { gmailMessageIdFromMetadata, gmailMessageUrl } from './gmailSource.js';
+import { escapeHtml, safeUrl } from './renderUtils.js';
 import type { AppConfig, DigestItem, DigestMeta } from './types.js';
 
 export interface DigestEmailMessage {

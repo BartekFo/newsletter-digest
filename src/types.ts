@@ -17,26 +17,9 @@ export interface AppConfig {
   digestEmailRecipient: string;
 }
 
-export interface FetchedMessage {
-  raw: Buffer;
-  uid: number;
-}
-
-export interface ParsedMail {
-  messageId: string;
-  sender: string;
-  subject: string;
-  date: string;
-  html: string;
-  link: string | null;
-  isPaywalled: boolean;
-}
-
 export interface DigestItem {
   id: string;
   source: NewsletterSource;
-  messageId: string;
-  uid: number;
   sender: string;
   subject: string;
   date: string;
@@ -55,6 +38,25 @@ export interface NewsletterSourceIdentity {
 export interface NewsletterSource extends NewsletterSourceIdentity {
     cursor: string;
     metadata: Record<string, string | number>;
+}
+
+export interface SourceNewsletter {
+  source: NewsletterSource;
+  sender: string;
+  subject: string;
+  date: string;
+  html: string;
+  link: string | null;
+  isPaywalled: boolean;
+}
+
+export interface SourceBatch {
+  newsletters: SourceNewsletter[];
+  cursor: string | null;
+}
+
+export interface NewsletterSourceAdapter {
+  fetch(cursor: string | null): Promise<SourceBatch>;
 }
 
 export interface WeatherSummary {

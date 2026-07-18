@@ -12,9 +12,8 @@ import type {
   AppLogger,
   DigestItem,
   DigestMeta,
-  FetchedMessage,
   HackerNewsStory,
-  ParsedMail,
+  NewsletterSourceAdapter,
   WeatherSummary,
 } from './types.js';
 
@@ -25,8 +24,7 @@ function errorMessage(err: unknown): string {
 export interface DigestDeps {
   archive: DigestArchive;
   config: AppConfig;
-  fetchNewMessages(config: AppConfig, lastUid: number | null): Promise<FetchedMessage[]>;
-  parseMail(raw: Buffer): Promise<ParsedMail>;
+  source: NewsletterSourceAdapter;
   extractText(html: string): Promise<string>;
   summarize(text: string, model: string): Promise<string>;
   renderHtml?(items: DigestItem[], meta: DigestMeta): string;
@@ -63,8 +61,7 @@ export function createNewsletterRefresh(deps: DigestDeps): NewsletterRefresh {
  *   archive       — publication, recovery and read interface
  *   config        — { gmailUser, gmailAppPassword, imapFolder, bootstrapDays,
  *                     ollamaModel, dbPath, outPath }
- *   fetchNewMessages(config, lastUid) → Promise<{raw, uid}[]>
- *   parseMail(raw)                    → Promise<{messageId, sender, subject, date, html}>
+ *   source.fetch(cursor)              → Promise<{newsletters, cursor}>
  *   extractText(html)                 → Promise<string>
  *   summarize(text, model)            → Promise<string>
  *   renderHtml(items, meta)           → string
@@ -77,12 +74,11 @@ export function createNewsletterRefresh(deps: DigestDeps): NewsletterRefresh {
  *
  * @returns {Promise<{fetched: number, newItems: number, runId: number | null}>}
  */
-export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
+async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
   const {
     archive,
     config,
-    fetchNewMessages: fetch,
-    parseMail: parse,
+    source,
     extractText: extract,
     summarize: summariseFn,
     renderHtml: render,
@@ -97,57 +93,42 @@ export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
   } = deps;
 
   const startMs = Date.now();
-  const lastUid = archive.getCursor();
+  const cursor = archive.getCursor();
 
-  let fetched: FetchedMessage[] | undefined;
-  let newUids: number[] = [];
+  let fetchedCount = 0;
+  let newItemCount = 0;
   const stagedItems: DigestItem[] = [];
   const stagedMessageIds = new Set<string>();
 
   try {
-    logger.info({ lastUid, folder: config.imapFolder }, 'Łączę z Gmail, pobieram nowe wiadomości…');
-    fetched = await fetch(config, lastUid);
-    logger.info({ fetched: fetched.length }, 'Pobrano wiadomości z IMAP');
+    logger.info({ cursor }, 'Pobieram nowe newslettery ze źródła…');
+    const batch = await source.fetch(cursor);
+    fetchedCount = batch.newsletters.length;
+    logger.info({ fetched: fetchedCount }, 'Pobrano newslettery');
 
-    let maxUid = lastUid ?? 0;
-    newUids = [];
-
-    for (const { raw, uid } of fetched) {
-      const mail = await parse(raw);
-
-      // Always advance the cursor past seen UIDs, even already-known ones, so
-      // we don't re-fetch them on the next run (dedup is handled by isKnown).
-      maxUid = Math.max(maxUid, uid);
-
-      const sourceIdentity = { type: 'gmail', externalId: mail.messageId };
-      if (archive.isKnown(sourceIdentity) || stagedMessageIds.has(mail.messageId)) {
-        logger.debug({ uid, subject: mail.subject }, 'Pomijam — już znana');
+    for (const newsletter of batch.newsletters) {
+      const sourceKey = `${newsletter.source.type}\0${newsletter.source.externalId}`;
+      if (archive.isKnown(newsletter.source) || stagedMessageIds.has(sourceKey)) {
+        logger.debug({ newsletter: newsletter.source.externalId, subject: newsletter.subject }, 'Pomijam — już znana');
         continue;
       }
 
-      const cleanText = await extract(mail.html);
+      const cleanText = await extract(newsletter.html);
 
       const item: DigestItem = {
         id: randomUUID(),
-        source: {
-          type: 'gmail',
-          externalId: mail.messageId,
-          cursor: String(uid),
-          metadata: { gmailMessageId: mail.messageId, gmailUid: uid },
-        },
-        messageId: mail.messageId,
-        uid,
-        sender: mail.sender,
-        subject: mail.subject,
-        date: mail.date,
+        source: newsletter.source,
+        sender: newsletter.sender,
+        subject: newsletter.subject,
+        date: newsletter.date,
         cleanText,
         summary: null,
-        link: mail.link ?? null,
-        isPaywalled: mail.isPaywalled,
+        link: newsletter.link,
+        isPaywalled: newsletter.isPaywalled,
       };
 
       logger.info(
-        { uid, sender: mail.sender, subject: mail.subject, model: config.ollamaModel },
+        { newsletterId: item.id, sender: newsletter.sender, subject: newsletter.subject, model: config.ollamaModel },
         'Streszczam (lokalny model — może chwilę potrwać)…',
       );
       const summaryStartMs = Date.now();
@@ -157,7 +138,7 @@ export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
 
         item.summary = summary;
         logger.info(
-          { uid, subject: mail.subject, ms: Date.now() - summaryStartMs },
+          { newsletterId: item.id, subject: newsletter.subject, ms: Date.now() - summaryStartMs },
           'Streszczono',
         );
       } catch (err) {
@@ -165,26 +146,26 @@ export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
         // summary null (render shows "(brak streszczenia)") and keep going so the
         // item still reaches the digest and the cursor still advances past it.
         logger.error(
-        { uid, messageId: mail.messageId, err: errorMessage(err), ms: Date.now() - summaryStartMs },
+        { newsletterId: item.id, sourceId: newsletter.source.externalId, err: errorMessage(err), ms: Date.now() - summaryStartMs },
           'Streszczenie nieudane — pomijam, zostawiam placeholder',
         );
       }
 
-      newUids.push(uid);
+      newItemCount++;
       stagedItems.push(item);
-      stagedMessageIds.add(mail.messageId);
+      stagedMessageIds.add(sourceKey);
     }
 
-    if (newUids.length === 0) {
+    if (newItemCount === 0) {
       const durationMs = Date.now() - startMs;
       logger.info(
-        { fetched: fetched.length, durationMs },
+        { fetched: fetchedCount, durationMs },
         'Brak nowych newsletterów — zachowuję poprzedni digest',
       );
-      return { fetched: fetched.length, newItems: 0, runId: null, newsletterIds: [] };
+      return { fetched: fetchedCount, newItems: 0, runId: null, newsletterIds: [] };
     }
 
-    logger.info({ newItems: newUids.length }, 'Przetworzono maile, pobieram pogodę i HackerNews…');
+    logger.info({ newItems: newItemCount }, 'Przetworzono newslettery, pobieram pogodę i HackerNews…');
     const items = stagedItems;
 
     // Optional extras — failure-safe: a dead API must not abort the digest.
@@ -197,18 +178,20 @@ export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
 
     const digestMeta = {
       ranAt: now().toISOString(),
-      newCount: newUids.length,
+      newCount: newItemCount,
       gmailUser: config.gmailUser,
       weather,
       hackernews,
     };
     const durationMs = Date.now() - startMs;
+    const publicationCursor = batch.cursor ?? stagedItems.at(-1)?.source.cursor;
+    if (!publicationCursor) throw new Error('Source did not provide a publication cursor.');
     const runId = archive.publishSnapshot({
       items,
-      cursorUid: maxUid,
+      cursor: publicationCursor,
       run: {
-        fetched: fetched.length,
-        newItems: newUids.length,
+        fetched: fetchedCount,
+        newItems: newItemCount,
         durationMs,
         ok: 1,
         weather,
@@ -247,13 +230,13 @@ export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
     }
 
     logger.info(
-      { fetched: fetched.length, newItems: newUids.length, durationMs },
+      { fetched: fetchedCount, newItems: newItemCount, durationMs },
       'Gotowe',
     );
 
     return {
-      fetched: fetched.length,
-      newItems: newUids.length,
+      fetched: fetchedCount,
+      newItems: newItemCount,
       runId,
       newsletterIds: publishedItems.map((item) => item.id),
     };
@@ -263,8 +246,8 @@ export async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
       'Bieg nieudany',
     );
     archive.recordFailedRefresh({
-      fetched: fetched?.length ?? 0,
-      newItems: newUids?.length ?? 0,
+      fetched: fetchedCount,
+      newItems: newItemCount,
       durationMs: Date.now() - startMs,
       ok: false,
     });
