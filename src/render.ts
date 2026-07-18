@@ -1,3 +1,4 @@
+import { renderBrowserChatScript } from './browserChat.js';
 import { escapeHtml, gmailMessageUrl, safeUrl } from './renderUtils.js';
 import type { DigestItem, DigestMeta, HackerNewsStory, RunSummary, WeatherSummary } from './types.js';
 
@@ -793,96 +794,7 @@ ${renderHackerNews(meta.hackernews)}
     </form>
   </div>
 </section>`,
-    scripts: `<script>
-(() => {
-  const panel = document.getElementById('chat-panel');
-  const title = document.getElementById('chat-title');
-  const log = document.getElementById('chat-log');
-  const form = document.getElementById('chat-form');
-  const question = document.getElementById('chat-question');
-  const close = document.querySelector('.chat-close');
-  const send = form.querySelector('button[type="submit"]');
-  // Give the server five seconds to return its structured five-minute timeout response.
-  const CHAT_CLIENT_TIMEOUT_MS = 305_000;
-  let messageId = null;
-  let history = [];
-  let sending = false;
-
-  function addMessage(role, content) {
-    const el = document.createElement('div');
-    el.className = 'chat-message ' + role;
-    el.textContent = content;
-    log.appendChild(el);
-    log.scrollTop = log.scrollHeight;
-    return el;
-  }
-
-  function setSending(value) {
-    sending = value;
-    question.disabled = value;
-    send.disabled = value;
-    send.textContent = value ? 'Czekam…' : 'Wyślij';
-  }
-
-  document.querySelectorAll('.chat-button').forEach((button) => {
-    button.addEventListener('click', () => {
-      if (sending) return;
-      messageId = button.dataset.messageId;
-      history = [];
-      log.textContent = '';
-      setSending(false);
-      title.textContent = button.dataset.subject || 'Chat';
-      panel.hidden = false;
-      question.focus();
-    });
-  });
-
-  close.addEventListener('click', () => {
-    panel.hidden = true;
-  });
-
-  panel.addEventListener('click', (event) => {
-    if (event.target === panel) panel.hidden = true;
-  });
-
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const text = question.value.trim();
-    if (!text || !messageId || sending) return;
-
-    question.value = '';
-    addMessage('user', text);
-    setSending(true);
-    const loading = addMessage('loading', 'Czekam na odpowiedź modelu… To może potrwać kilka minut.');
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), CHAT_CLIENT_TIMEOUT_MS);
-
-    try {
-      const response = await fetch('/chat', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ messageId, question: text, history }),
-        signal: controller.signal,
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || 'Chat nie odpowiedział.');
-      loading.remove();
-      addMessage('assistant', data.answer);
-      history.push({ role: 'user', content: text }, { role: 'assistant', content: data.answer });
-    } catch (err) {
-      loading.remove();
-      const message = err instanceof Error && err.name === 'AbortError'
-        ? 'Odpowiedź trwa zbyt długo. Sprawdź, czy Ollama działa i model jest gotowy.'
-        : err instanceof Error ? err.message : String(err);
-      addMessage('error', message);
-    } finally {
-      window.clearTimeout(timeout);
-      setSending(false);
-      question.focus();
-    }
-  });
-})();
-</script>`,
+    scripts: renderBrowserChatScript(),
   });
 }
 
