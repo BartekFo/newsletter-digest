@@ -1,7 +1,13 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { summarize, buildPrompt, MAX_CHARS, INSTRUCTION } from '../src/summarize.js';
+import {
+  summarize,
+  buildPrompt,
+  MAX_CHARS,
+  INSTRUCTION,
+  type SummaryClient,
+  type SummaryRequest,
+} from '../src/summarize.js';
 
 // ---------------------------------------------------------------------------
 // Unit tests for buildPrompt (no network)
@@ -37,42 +43,22 @@ test('buildPrompt: long text is truncated to MAX_CHARS', () => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// Integration test — skips gracefully when Ollama is unreachable
-// ---------------------------------------------------------------------------
+test('summarize: uses an injected model client and trims its answer', async () => {
+  let request: SummaryRequest | undefined;
+  const client: SummaryClient = {
+    async chat(params) {
+      request = params;
+      return { message: { content: '  Gotowe podsumowanie.  ' } };
+    },
+  };
 
-let ollamaReachable = false;
-try {
-  const res = await fetch('http://localhost:11434/api/tags', {
-    signal: AbortSignal.timeout(2000),
-  });
-  ollamaReachable = res.ok;
-} catch {
-  ollamaReachable = false;
-}
+  const summary = await summarize('Treść newslettera', 'test-model', client);
 
-test(
-  'summarize: returns non-empty Polish summary from Ollama (integration)',
-  { skip: !ollamaReachable ? 'Ollama not reachable — skipping integration test' : false, timeout: 120_000 },
-  async (t) => {
-    const sample =
-      'This week: React 19 is out with new hooks for async state, ' +
-      'TypeScript 5.5 ships satisfies improvements, and Bun 1.2 adds ' +
-      'native S3 support. Plenty of tooling news worth catching up on.';
-
-    let summary;
-    try {
-      summary = await summarize(sample, 'gemma4:12b');
-    } catch (err) {
-      if (err instanceof Error && err.message.includes('not found')) {
-        t.skip(`Ollama model not installed: ${err.message}`);
-        return;
-      }
-      throw err;
-    }
-
-    assert.ok(typeof summary === 'string', 'Summary must be a string');
-    assert.ok(summary.length > 0, 'Summary must be non-empty');
-    assert.ok(summary.length < 1000, `Summary suspiciously long (${summary.length} chars): ${summary}`);
-  },
-);
+  assert.equal(summary, 'Gotowe podsumowanie.');
+  assert.ok(request);
+  assert.equal(request.model, 'test-model');
+  assert.deepEqual(request.messages, [
+    { role: 'user', content: `${INSTRUCTION}Treść newslettera` },
+  ]);
+  assert.deepEqual(request.options, { think: false });
+});

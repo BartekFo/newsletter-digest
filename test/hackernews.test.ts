@@ -1,37 +1,56 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchTopStories } from '../src/hackernews.js';
+import { fetchTopStories, type HackerNewsClient } from '../src/hackernews.js';
+import { silentLogger } from '../src/logger.js';
 
-// ---------------------------------------------------------------------------
-// Integration test — skips gracefully when the HN API is unreachable
-// ---------------------------------------------------------------------------
+test('fetchTopStories: shapes the requested stories from an injected client', async () => {
+  const requestedIds: number[] = [];
+  const client: HackerNewsClient = {
+    async topStoryIds() {
+      return [101, 102, 103];
+    },
+    async story(id) {
+      requestedIds.push(id);
+      if (id === 101) {
+        return { title: 'External story', url: 'https://example.com/story', score: 42, descendants: 7 };
+      }
+      if (id === 102) return { title: 'Ask HN' };
+      return { score: 99 };
+    },
+  };
 
-let apiReachable = false;
-try {
-  const res = await fetch('https://hacker-news.firebaseio.com/v0/topstories.json', {
-    signal: AbortSignal.timeout(3000),
-  });
-  apiReachable = res.ok;
-} catch {
-  apiReachable = false;
-}
+  const stories = await fetchTopStories(3, silentLogger, client);
 
-test(
-  'fetchTopStories: returns up to N shaped stories (integration)',
-  { skip: !apiReachable ? 'HackerNews not reachable — skipping integration test' : false, timeout: 30_000 },
-  async () => {
-    const stories = await fetchTopStories(6);
+  assert.deepEqual(requestedIds, [101, 102, 103]);
+  assert.deepEqual(stories, [
+    {
+      title: 'External story',
+      url: 'https://example.com/story',
+      score: 42,
+      comments: 7,
+      hnUrl: 'https://news.ycombinator.com/item?id=101',
+    },
+    {
+      title: 'Ask HN',
+      url: 'https://news.ycombinator.com/item?id=102',
+      score: 0,
+      comments: 0,
+      hnUrl: 'https://news.ycombinator.com/item?id=102',
+    },
+  ]);
+});
 
-    assert.ok(Array.isArray(stories), 'stories must be an array');
-    assert.ok(stories.length <= 6, 'must return at most 6 stories');
-    assert.ok(stories.length > 0, 'should return at least one story');
+test('fetchTopStories: client failure returns null without throwing', async () => {
+  const client: HackerNewsClient = {
+    async topStoryIds() {
+      throw new Error('Hacker News unavailable');
+    },
+    async story() {
+      throw new Error('story should not be called');
+    },
+  };
 
-    for (const s of stories) {
-      assert.ok(s.title.length > 0, 'story must have a title');
-      assert.ok(s.url.length > 0, 'story must have a url (external or HN thread)');
-      assert.ok(s.hnUrl.includes('news.ycombinator.com'), 'hnUrl must point at HN');
-      assert.equal(typeof s.score, 'number', 'score must be a number');
-    }
-  },
-);
+  const stories = await fetchTopStories(6, silentLogger, client);
+
+  assert.equal(stories, null);
+});

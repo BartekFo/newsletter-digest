@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -18,19 +17,12 @@ import {
   getLatestNonEmptyRun,
   getRunSummaries,
 } from '../src/store.js';
+import type { Db } from '../src/types.js';
+import { buildDigestItem } from './builders.js';
 
-const SAMPLE_ITEM = {
-  messageId: '<test-1@example.com>',
-  uid: 101,
-  sender: 'newsletter@example.com',
-  subject: 'Weekly Digest',
-  date: '2026-06-27T10:00:00Z',
-  cleanText: 'Hello world content',
-  summary: null,
-  isPaywalled: false,
-};
+const SAMPLE_ITEM = buildDigestItem();
 
-function freshDb() {
+function freshDb(): Db {
   const db = openDb(':memory:');
   initSchema(db);
   return db;
@@ -48,9 +40,9 @@ test('initSchema creates tables; calling twice does not throw', () => {
   initSchema(db);
   initSchema(db); // idempotent
 
-  const tables = db
+  const tables = (db
     .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-    .all()
+    .all() as { name: string }[])
     .map((r) => r.name);
 
   assert.ok(tables.includes('items'));
@@ -78,7 +70,8 @@ test('initSchema migrates legacy items table with is_paywalled column', () => {
 
   initSchema(db);
 
-  const columns = db.prepare('PRAGMA table_info(items)').all().map((r) => r.name);
+  const columns = (db.prepare('PRAGMA table_info(items)').all() as { name: string }[])
+    .map((r) => r.name);
   assert.ok(columns.includes('is_paywalled'), 'is_paywalled column missing');
   db.close();
 });
@@ -123,18 +116,19 @@ test('insertItem duplicate does not create a second row', () => {
   const db = freshDb();
   insertItem(db, SAMPLE_ITEM);
   insertItem(db, SAMPLE_ITEM);
-  const count = db.prepare('SELECT COUNT(*) as c FROM items').get().c;
+  const count = (db.prepare('SELECT COUNT(*) as c FROM items').get() as { c: number }).c;
   assert.equal(count, 1);
   db.close();
 });
 
 test('insertItem stores and reads isPaywalled flag', () => {
   const db = freshDb();
-  const item = { ...SAMPLE_ITEM, isPaywalled: true };
+  const item = buildDigestItem({ isPaywalled: true });
 
   insertItem(db, item);
 
   const found = getItemByMessageId(db, item.messageId);
+  assert.ok(found);
   assert.equal(found.isPaywalled, true);
   db.close();
 });
@@ -156,7 +150,9 @@ test('setSummary updates the summary for a known item', () => {
   const db = freshDb();
   insertItem(db, SAMPLE_ITEM);
   setSummary(db, SAMPLE_ITEM.messageId, 'A great summary');
-  const row = db.prepare('SELECT summary FROM items WHERE message_id = ?').get(SAMPLE_ITEM.messageId);
+  const row = db.prepare('SELECT summary FROM items WHERE message_id = ?').get(SAMPLE_ITEM.messageId) as {
+    summary: string | null;
+  };
   assert.equal(row.summary, 'A great summary');
   db.close();
 });
@@ -164,7 +160,7 @@ test('setSummary updates the summary for a known item', () => {
 test('recordRun appends a row to runs', () => {
   const db = freshDb();
   const runId = recordRun(db, { fetched: 10, newItems: 3, durationMs: 500, ok: true });
-  const count = db.prepare('SELECT COUNT(*) as c FROM runs').get().c;
+  const count = (db.prepare('SELECT COUNT(*) as c FROM runs').get() as { c: number }).c;
   assert.equal(count, 1);
   assert.equal(runId, 1);
   db.close();
@@ -174,16 +170,15 @@ test('recordRun stores ok=1 for true and ok=0 for false', () => {
   const db = freshDb();
   recordRun(db, { fetched: 5, newItems: 0, durationMs: 100, ok: true });
   recordRun(db, { fetched: 5, newItems: 0, durationMs: 200, ok: false });
-  const rows = db.prepare('SELECT ok FROM runs ORDER BY id').all();
-  assert.equal(rows[0].ok, 1);
-  assert.equal(rows[1].ok, 0);
+  const rows = db.prepare('SELECT ok FROM runs ORDER BY id').all() as { ok: number }[];
+  assert.deepEqual(rows, [{ ok: 1 }, { ok: 0 }]);
   db.close();
 });
 
 test('getItemsByUids returns matching items in camelCase shape', () => {
   const db = freshDb();
-  const item2 = { ...SAMPLE_ITEM, messageId: '<test-2@example.com>', uid: 102 };
-  const item3 = { ...SAMPLE_ITEM, messageId: '<test-3@example.com>', uid: 103 };
+  const item2 = buildDigestItem({ messageId: '<test-2@example.com>', uid: 102 });
+  const item3 = buildDigestItem({ messageId: '<test-3@example.com>', uid: 103 });
   insertItem(db, SAMPLE_ITEM);
   insertItem(db, item2);
   insertItem(db, item3);
@@ -195,10 +190,12 @@ test('getItemsByUids returns matching items in camelCase shape', () => {
   assert.deepEqual(uids, [101, 103]);
 
   // verify camelCase shape
-  assert.ok('messageId' in results[0]);
-  assert.ok('cleanText' in results[0]);
-  assert.ok(!('message_id' in results[0]));
-  assert.ok(!('clean_text' in results[0]));
+  const first = results[0];
+  assert.ok(first);
+  assert.ok('messageId' in first);
+  assert.ok('cleanText' in first);
+  assert.ok(!('message_id' in first));
+  assert.ok(!('clean_text' in first));
   db.close();
 });
 
@@ -214,6 +211,7 @@ test('getItemByMessageId returns matching item or null', () => {
   insertItem(db, SAMPLE_ITEM);
 
   const found = getItemByMessageId(db, SAMPLE_ITEM.messageId);
+  assert.ok(found);
   assert.equal(found.messageId, SAMPLE_ITEM.messageId);
   assert.equal(found.cleanText, SAMPLE_ITEM.cleanText);
   assert.equal(getItemByMessageId(db, '<missing@example.com>'), null);
@@ -222,7 +220,11 @@ test('getItemByMessageId returns matching item or null', () => {
 
 test('addRunItems links a run to items and getItemsByRunId returns snapshot items', () => {
   const db = freshDb();
-  const item2 = { ...SAMPLE_ITEM, messageId: '<test-2@example.com>', uid: 102, subject: 'Second' };
+  const item2 = buildDigestItem({
+    messageId: '<test-2@example.com>',
+    uid: 102,
+    subject: 'Second',
+  });
   insertItem(db, SAMPLE_ITEM);
   insertItem(db, item2);
 
@@ -245,12 +247,15 @@ test('getRunSummaries and getLatestNonEmptyRun ignore empty technical runs', () 
 
   const summaries = getRunSummaries(db);
   assert.equal(summaries.length, 1);
-  assert.equal(summaries[0].id, nonEmptyRunId);
-  assert.equal(summaries[0].newItems, 1);
-  assert.equal(summaries[0].itemCount, 1);
-  assert.notEqual(summaries[0].id, emptyRunId);
+  const summary = summaries[0];
+  assert.ok(summary);
+  assert.equal(summary.id, nonEmptyRunId);
+  assert.equal(summary.newItems, 1);
+  assert.equal(summary.itemCount, 1);
+  assert.notEqual(summary.id, emptyRunId);
 
   const latest = getLatestNonEmptyRun(db);
+  assert.ok(latest);
   assert.equal(latest.id, nonEmptyRunId);
   db.close();
 });

@@ -10,7 +10,8 @@
     "start": "node dist/src/server.js",
     "open": "node dist/src/server.js --no-refresh",
     "digest:export": "node dist/src/digest.js",
-    "test": "npm run build && node --test \"dist/test/*.test.js\""
+    "test": "npm run build && node --test \"dist/test/*.test.js\"",
+    "test:smoke": "npm run build && node --test \"dist/test/smoke/*.test.js\""
   },
   "engines": {
     "node": ">=22"
