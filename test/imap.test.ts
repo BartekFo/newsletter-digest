@@ -1,8 +1,7 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildFetchCriteria, fetchNewMessages } from '../src/imap.js';
+import { buildFetchCriteria, fetchNewMessages, type ImapClient } from '../src/imap.js';
 
 // ── Unit tests (no network) ────────────────────────────────────────────────
 
@@ -38,14 +37,18 @@ test('buildFetchCriteria — lastUid=0 returns range 1:*', () => {
 
 test('fetchNewMessages — uid mode returns [] when fetch throws NONEXISTENT', async () => {
   let loggedOut = false;
-  const fakeClient = {
+  const fakeClient: ImapClient = {
     async connect() {},
     async mailboxOpen() {},
+    async search() {
+      return [];
+    },
     fetch() {
       return (async function* () {
-        const err = new Error('Command failed');
-        err.responseStatus = 'NO';
-        err.responseText = 'NONEXISTENT No matching messages';
+        const err = Object.assign(new Error('Command failed'), {
+          responseStatus: 'NO',
+          responseText: 'NONEXISTENT No matching messages',
+        });
         throw err;
       })();
     },
@@ -54,7 +57,12 @@ test('fetchNewMessages — uid mode returns [] when fetch throws NONEXISTENT', a
     },
   };
 
-  const config = { imapFolder: 'Newsletters', bootstrapDays: 7 };
+  const config = {
+    gmailUser: 'test@example.com',
+    gmailAppPassword: 'test-password',
+    imapFolder: 'Newsletters',
+    bootstrapDays: 7,
+  };
   const result = await fetchNewMessages(config, 500, fakeClient);
 
   assert.deepEqual(result, []);
@@ -63,9 +71,12 @@ test('fetchNewMessages — uid mode returns [] when fetch throws NONEXISTENT', a
 
 test('fetchNewMessages — re-throws genuine (non-NONEXISTENT) errors', async () => {
   let loggedOut = false;
-  const fakeClient = {
+  const fakeClient: ImapClient = {
     async connect() {},
     async mailboxOpen() {},
+    async search() {
+      return [];
+    },
     fetch() {
       return (async function* () {
         throw new Error('Authentication failed');
@@ -76,36 +87,12 @@ test('fetchNewMessages — re-throws genuine (non-NONEXISTENT) errors', async ()
     },
   };
 
-  const config = { imapFolder: 'Newsletters', bootstrapDays: 7 };
+  const config = {
+    gmailUser: 'test@example.com',
+    gmailAppPassword: 'test-password',
+    imapFolder: 'Newsletters',
+    bootstrapDays: 7,
+  };
   await assert.rejects(() => fetchNewMessages(config, 500, fakeClient), /Authentication failed/);
   assert.equal(loggedOut, true, 'logout must still be called in finally');
 });
-
-// ── Integration test (skipped unless credentials are present) ──────────────
-
-const hasCredentials =
-  typeof process.env.GMAIL_USER === 'string' &&
-  process.env.GMAIL_USER.length > 0 &&
-  typeof process.env.GMAIL_APP_PASSWORD === 'string' &&
-  process.env.GMAIL_APP_PASSWORD.length > 0;
-
-test(
-  'fetchNewMessages — connects and returns array of { raw, uid } objects',
-  { skip: hasCredentials ? false : 'no Gmail credentials (set GMAIL_USER and GMAIL_APP_PASSWORD)' },
-  async () => {
-    const config = {
-      gmailUser: process.env.GMAIL_USER,
-      gmailAppPassword: process.env.GMAIL_APP_PASSWORD,
-      imapFolder: process.env.IMAP_FOLDER ?? 'Newsletters',
-      bootstrapDays: 1,
-    };
-
-    const messages = await fetchNewMessages(config, null);
-
-    assert.ok(Array.isArray(messages), 'result must be an array');
-    for (const msg of messages) {
-      assert.ok(Buffer.isBuffer(msg.raw), 'msg.raw must be a Buffer');
-      assert.equal(typeof msg.uid, 'number', 'msg.uid must be a number');
-    }
-  },
-);

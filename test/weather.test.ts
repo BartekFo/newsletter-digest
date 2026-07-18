@@ -1,7 +1,7 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { weatherCodeToText, fetchWeather } from '../src/weather.js';
+import { weatherCodeToText, fetchWeather, type WeatherClient } from '../src/weather.js';
+import { silentLogger } from '../src/logger.js';
 
 // ---------------------------------------------------------------------------
 // Unit tests for weatherCodeToText (no network)
@@ -17,34 +17,48 @@ test('weatherCodeToText: unknown code falls back', () => {
   assert.equal(weatherCodeToText(9999), 'Nieznane warunki');
 });
 
-// ---------------------------------------------------------------------------
-// Integration test — skips gracefully when Open-Meteo is unreachable
-// ---------------------------------------------------------------------------
+test('fetchWeather: shapes data from an injected Open-Meteo client', async () => {
+  const client: WeatherClient = {
+    async geocode(city) {
+      assert.equal(city, 'Warsaw');
+      return { lat: 52.23, lon: 21.01, name: 'Warszawa' };
+    },
+    async forecast(coordinates) {
+      assert.deepEqual(coordinates, { lat: 52.23, lon: 21.01 });
+      return {
+        current: { temperature_2m: 18.6, weather_code: 61 },
+        daily: {
+          temperature_2m_max: [22.4],
+          temperature_2m_min: [11.7],
+          precipitation_probability_max: [65],
+        },
+      };
+    },
+  };
 
-let apiReachable = false;
-try {
-  const res = await fetch('https://geocoding-api.open-meteo.com/v1/search?name=Warsaw&count=1', {
-    signal: AbortSignal.timeout(3000),
+  const weather = await fetchWeather({ weatherCity: 'Warsaw' }, silentLogger, client);
+
+  assert.deepEqual(weather, {
+    city: 'Warszawa',
+    temp: 19,
+    code: 61,
+    description: 'Lekki deszcz',
+    max: 22,
+    min: 12,
+    precipProb: 65,
   });
-  apiReachable = res.ok;
-} catch {
-  apiReachable = false;
-}
+});
 
-test(
-  'fetchWeather: returns shaped object for a real city (integration)',
-  { skip: !apiReachable ? 'Open-Meteo not reachable — skipping integration test' : false, timeout: 20_000 },
-  async () => {
-    const weather = await fetchWeather({ weatherCity: 'Warsaw' });
+test('fetchWeather: client failure returns null without throwing', async () => {
+  const client: WeatherClient = {
+    async geocode() {
+      throw new Error('Open-Meteo unavailable');
+    },
+    async forecast() {
+      throw new Error('forecast should not be called');
+    },
+  };
 
-    assert.ok(weather, 'weather should not be null');
-    assert.equal(typeof weather.temp, 'number', 'temp must be a number');
-    assert.equal(typeof weather.description, 'string', 'description must be a string');
-    assert.ok(weather.city.length > 0, 'city must be non-empty');
-  },
-);
-
-test('fetchWeather: bad city returns null (failure-safe)', async () => {
-  const weather = await fetchWeather({ weatherCity: 'zzzzzzznotacity12345' });
+  const weather = await fetchWeather({ weatherCity: 'Warsaw' }, silentLogger, client);
   assert.equal(weather, null);
 });

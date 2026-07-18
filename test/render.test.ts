@@ -1,9 +1,15 @@
-// @ts-nocheck
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderHtml, renderRunsPage } from '../src/render.js';
+import type {
+  DigestItem,
+  DigestMeta,
+  HackerNewsStory,
+  WeatherSummary,
+} from '../src/types.js';
+import { buildDigestItem } from './builders.js';
 
-const ITEM_A = {
+const ITEM_A = buildDigestItem({
   messageId: '<a@test>',
   uid: 1,
   sender: 'Alice <alice@example.com>',
@@ -12,9 +18,9 @@ const ITEM_A = {
   cleanText: 'Body A',
   summary: 'Summary of January newsletter.',
   isPaywalled: false,
-};
+});
 
-const ITEM_B = {
+const ITEM_B = buildDigestItem({
   messageId: '<b@test>',
   uid: 2,
   sender: 'Bob <bob@example.com>',
@@ -23,9 +29,13 @@ const ITEM_B = {
   cleanText: 'Body B',
   summary: 'Summary of February newsletter.',
   isPaywalled: false,
-};
+});
 
-const META = { ranAt: '2024-03-01T08:00:00.000Z', newCount: 2 };
+const META: DigestMeta = { ranAt: '2024-03-01T08:00:00.000Z', newCount: 2 };
+
+function renderUnknownItems(items: unknown, meta: DigestMeta = META): string {
+  return renderHtml(items as DigestItem[], meta);
+}
 
 test('two items — output contains both subjects, senders, summaries', () => {
   const html = renderHtml([ITEM_A, ITEM_B], META);
@@ -78,13 +88,13 @@ test('HTML escaping: & in subject is escaped', () => {
 
 test('summary: null does not crash and shows fallback', () => {
   const noSummary = { ...ITEM_A, summary: null };
-  let html;
+  let html = '';
   assert.doesNotThrow(() => { html = renderHtml([noSummary], META); });
   assert.ok(html.includes('brak streszczenia'), 'fallback text missing for null summary');
 });
 
 test('empty items array returns valid page with brak message, no throw', () => {
-  let html;
+  let html = '';
   assert.doesNotThrow(() => { html = renderHtml([], { ranAt: '2024-03-01T08:00:00.000Z', newCount: 0 }); });
   assert.ok(html.includes('<!DOCTYPE html>'), 'not a valid HTML doc');
   assert.ok(html.includes('Brak nowych newsletterów'), 'missing brak message');
@@ -122,15 +132,16 @@ test('messageId with special chars (<, &) is URL-encoded and HTML-attribute-esca
   // The href value after escapeHtml must not contain a literal unencoded <
   // We verify by checking the raw character does not appear as part of an href="..." value
   const hrefMatch = html.match(/href="([^"]+)"/);
-  assert.ok(hrefMatch, 'no href attribute found in output');
-  assert.ok(!hrefMatch[1].includes('<'), 'raw < found unescaped inside href attribute');
-  assert.ok(!hrefMatch[1].includes('&baz'), 'raw & found unescaped inside href attribute (should be %26baz)');
+  const href = hrefMatch?.[1];
+  assert.ok(href, 'no href attribute found in output');
+  assert.ok(!href.includes('<'), 'raw < found unescaped inside href attribute');
+  assert.ok(!href.includes('&baz'), 'raw & found unescaped inside href attribute (should be %26baz)');
 });
 
 test('item with null messageId renders no href, no throw', () => {
-  const noId = { ...ITEM_A, messageId: null };
-  let html;
-  assert.doesNotThrow(() => { html = renderHtml([noId], META); });
+  const noId: unknown = { ...ITEM_A, messageId: null };
+  let html = '';
+  assert.doesNotThrow(() => { html = renderUnknownItems([noId]); });
   assert.ok(!html.includes('rfc822msgid:'), 'href rendered despite null messageId');
 });
 
@@ -161,7 +172,7 @@ test('render does not include cleanText body', () => {
 
 test('item with empty string messageId renders no href, no throw', () => {
   const emptyId = { ...ITEM_A, messageId: '' };
-  let html;
+  let html = '';
   assert.doesNotThrow(() => { html = renderHtml([emptyId], META); });
   assert.ok(!html.includes('rfc822msgid:'), 'href rendered despite empty messageId');
 });
@@ -220,7 +231,7 @@ test('free item does not render paid badge', () => {
 // Weather banner
 // ---------------------------------------------------------------------------
 
-const WEATHER = {
+const WEATHER: WeatherSummary = {
   city: 'Warszawa',
   temp: 18,
   code: 2,
@@ -249,7 +260,7 @@ test('weather: no banner when weather is null/absent', () => {
 // HackerNews section
 // ---------------------------------------------------------------------------
 
-const HN = [
+const HN: HackerNewsStory[] = [
   { title: 'Story One', url: 'https://example.com/1', score: 250, comments: 80, hnUrl: 'https://news.ycombinator.com/item?id=1' },
   { title: 'Ask HN: something', url: 'https://news.ycombinator.com/item?id=2', score: 90, comments: 40, hnUrl: 'https://news.ycombinator.com/item?id=2' },
 ];
@@ -274,7 +285,7 @@ test('hackernews: no section when list is null or empty', () => {
 });
 
 test('hackernews: malicious title is escaped', () => {
-  const evil = [{ title: '<script>alert(1)</script>', url: 'https://x.com', score: 1, comments: 0, hnUrl: 'https://news.ycombinator.com/item?id=9' }];
+  const evil: HackerNewsStory[] = [{ title: '<script>alert(1)</script>', url: 'https://x.com', score: 1, comments: 0, hnUrl: 'https://news.ycombinator.com/item?id=9' }];
   const html = renderHtml([ITEM_A], { ...META, hackernews: evil });
 
   assert.ok(!html.includes('<script>alert(1)</script>'), 'raw script in HN title not escaped');

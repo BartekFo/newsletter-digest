@@ -58,7 +58,7 @@ interface GeocodeResponse {
   results?: Array<{ latitude: number; longitude: number; name: string }>;
 }
 
-interface ForecastResponse {
+export interface WeatherForecast {
   current?: {
     temperature_2m?: number;
     weather_code?: number;
@@ -70,11 +70,18 @@ interface ForecastResponse {
   };
 }
 
+export interface WeatherClient {
+  geocode(city: string): Promise<{ lat: number; lon: number; name: string }>;
+  forecast(coordinates: { lat: number; lon: number }): Promise<WeatherForecast>;
+}
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export async function geocodeCity(city: string): Promise<{ lat: number; lon: number; name: string }> {
+export async function geocodeCity(
+  city: string,
+): Promise<{ lat: number; lon: number; name: string }> {
   const url = `${GEOCODE_URL}?name=${encodeURIComponent(city)}&count=1&language=pl&format=json`;
   const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
   if (!res.ok) throw new Error(`Geocoding failed: HTTP ${res.status}`);
@@ -86,6 +93,30 @@ export async function geocodeCity(city: string): Promise<{ lat: number; lon: num
   return { lat: hit.latitude, lon: hit.longitude, name: hit.name };
 }
 
+async function forecastWithOpenMeteo(
+  coordinates: { lat: number; lon: number },
+): Promise<WeatherForecast> {
+  const params = new URLSearchParams({
+    latitude: String(coordinates.lat),
+    longitude: String(coordinates.lon),
+    current: 'temperature_2m,weather_code',
+    daily: 'temperature_2m_max,temperature_2m_min,precipitation_probability_max',
+    timezone: 'auto',
+  });
+
+  const res = await fetch(`${FORECAST_URL}?${params}`, {
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`Forecast failed: HTTP ${res.status}`);
+
+  return (await res.json()) as WeatherForecast;
+}
+
+const openMeteoClient: WeatherClient = {
+  geocode: geocodeCity,
+  forecast: forecastWithOpenMeteo,
+};
+
 /**
  * Fetch current weather plus today's max/min and precipitation chance for the
  * configured city. Returns null on any failure (failure-safe — the digest must
@@ -93,30 +124,18 @@ export async function geocodeCity(city: string): Promise<{ lat: number; lon: num
  *
  * @param {{ weatherCity: string }} config
  * @param {import('pino').Logger} [logger=silentLogger]
+ * @param {WeatherClient} [client] - injectable Open-Meteo client for deterministic tests
  * @returns {Promise<{city: string, temp: number, code: number, description: string,
  *   max: number, min: number, precipProb: number} | null>}
  */
 export async function fetchWeather(
   config: { weatherCity: string },
   logger: AppLogger = silentLogger,
+  client: WeatherClient = openMeteoClient,
 ): Promise<WeatherSummary | null> {
   try {
-    const { lat, lon, name } = await geocodeCity(config.weatherCity);
-
-    const params = new URLSearchParams({
-      latitude: String(lat),
-      longitude: String(lon),
-      current: 'temperature_2m,weather_code',
-      daily: 'temperature_2m_max,temperature_2m_min,precipitation_probability_max',
-      timezone: 'auto',
-    });
-
-    const res = await fetch(`${FORECAST_URL}?${params}`, {
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-    if (!res.ok) throw new Error(`Forecast failed: HTTP ${res.status}`);
-
-    const data = (await res.json()) as ForecastResponse;
+    const { lat, lon, name } = await client.geocode(config.weatherCity);
+    const data = await client.forecast({ lat, lon });
     const code = data.current?.weather_code as number;
 
     return {

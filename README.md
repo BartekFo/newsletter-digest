@@ -167,8 +167,16 @@ This creates `digest.html`, a static export of the view.
 npm test
 ```
 
-The tests do not require access to your Gmail inbox. The IMAP integration test runs only
-when credentials are set in the environment.
+The default suite is fast and deterministic: it does not contact Gmail, Ollama, Open-Meteo,
+or Hacker News. Run the explicit integration smoke tests separately:
+
+```bash
+npm run test:smoke
+```
+
+The Gmail smoke test runs only when `GMAIL_USER` and `GMAIL_APP_PASSWORD` are set. The
+remaining smoke tests require their local or public services to be reachable and skip when
+they are unavailable.
 
 ## License
 

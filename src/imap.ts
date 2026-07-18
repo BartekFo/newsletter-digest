@@ -13,7 +13,7 @@ export type FetchCriteria =
   | { mode: 'since'; since: Date }
   | { mode: 'uid'; range: string };
 
-interface ImapLike {
+export interface ImapClient {
   connect(): Promise<void>;
   mailboxOpen(path: string): Promise<unknown>;
   search(query: object, options: object): Promise<number[]>;
@@ -66,7 +66,7 @@ function isNoMatchingMessagesError(err: unknown): boolean {
 export async function fetchNewMessages(
   config: Pick<AppConfig, 'gmailUser' | 'gmailAppPassword' | 'imapFolder' | 'bootstrapDays'>,
   lastUid: number | null,
-  client?: ImapLike,
+  client?: ImapClient,
 ): Promise<FetchedMessage[]> {
   const imap =
     client ??
@@ -80,7 +80,7 @@ export async function fetchNewMessages(
       },
       // Suppress imapflow's built-in logger to keep output clean
       logger: false,
-    }) as unknown as ImapLike);
+    }) as unknown as ImapClient);
 
   const messages: FetchedMessage[] = [];
 
