@@ -305,6 +305,11 @@ async function runStartupRefresh(deps: ReaderServerDeps): Promise<void> {
   await refresh(createDigestDeps(deps));
 }
 
+/** True when startup should skip IMAP fetch and just serve saved digests. */
+export function shouldSkipStartupRefresh(argv: string[] = process.argv): boolean {
+  return argv.includes('--no-refresh') || argv.includes('--open');
+}
+
 const isMain =
   process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 
@@ -324,16 +329,21 @@ if (isMain) {
     initSchema(db);
 
     const port = Number(process.env.PORT ?? '3789');
+    const skipRefresh = shouldSkipStartupRefresh();
     const server = createReaderServer({ db, config, logger });
 
     server.listen(port, '127.0.0.1', async () => {
       const url = `http://localhost:${port}`;
-      logger.info({ url }, 'Uruchomiono reader');
+      logger.info({ url, skipRefresh }, 'Uruchomiono reader');
 
-      try {
-        await runStartupRefresh({ db, config, logger });
-      } catch (err) {
-        logger.error({ err: errorMessage(err) }, 'Startowe pobieranie nieudane');
+      if (!skipRefresh) {
+        try {
+          await runStartupRefresh({ db, config, logger });
+        } catch (err) {
+          logger.error({ err: errorMessage(err) }, 'Startowe pobieranie nieudane');
+        }
+      } else {
+        logger.info('Pominięto startowe pobieranie — otwieram zapisany digest');
       }
 
       await openUrl(url);

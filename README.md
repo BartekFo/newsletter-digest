@@ -111,6 +111,15 @@ On macOS, your browser should open `http://localhost:3789` automatically. On Lin
 Windows, open that address manually. At startup, the application checks for new
 newsletters, saves a digest, and displays the latest non-empty view.
 
+To open the last saved digest without fetching mail or generating a new one:
+
+```bash
+npm run open
+```
+
+Same as `node dist/src/server.js --no-refresh` (also accepts `--open`). You can still use
+**Pobierz nowe** in the UI later.
+
 Stop the server with `Ctrl+C` in the terminal.
 
 ## Using the reader

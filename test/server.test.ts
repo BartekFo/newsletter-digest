@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createReaderServer } from '../src/server.js';
+import { createReaderServer, shouldSkipStartupRefresh } from '../src/server.js';
 import { addRunItems, initSchema, insertItem, openDb, recordRun } from '../src/store.js';
 
 const CONFIG = {
@@ -51,6 +51,12 @@ async function withServer(options, fn) {
     db.close();
   }
 }
+
+test('shouldSkipStartupRefresh reads --no-refresh and --open', () => {
+  assert.equal(shouldSkipStartupRefresh(['node', 'server.js']), false);
+  assert.equal(shouldSkipStartupRefresh(['node', 'server.js', '--no-refresh']), true);
+  assert.equal(shouldSkipStartupRefresh(['node', 'server.js', '--open']), true);
+});
 
 test('GET / without runs shows empty state', async () => {
   await withServer({}, async ({ baseUrl }) => {
