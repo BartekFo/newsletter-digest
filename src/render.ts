@@ -1,5 +1,5 @@
 import { renderBrowserChatScript } from './browserChat.js';
-import { gmailMessageIdFromMetadata, gmailMessageUrl } from './gmailSource.js';
+import { sortNewslettersNewestFirst } from './newsletterOrder.js';
 import { escapeHtml, safeUrl } from './renderUtils.js';
 import type { DigestItem, DigestMeta, HackerNewsStory, RunSummary, WeatherSummary } from './types.js';
 
@@ -344,7 +344,7 @@ ${list}
  * @returns {string} Full HTML document
  */
 export function renderDigestPage(items: DigestItem[], meta: DigestMeta): string {
-  const sorted = [...items].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const sorted = sortNewslettersNewestFirst(items);
 
   const ranAtFormatted = formatDate(meta.ranAt);
 
@@ -356,11 +356,12 @@ ${sorted.map(item => {
           ? `<p class="summary">${escapeHtml(item.summary)}</p>`
           : '<p class="summary empty">(brak streszczenia)</p>';
 
-        const gmailMessageId = gmailMessageIdFromMetadata(item.source.metadata);
-        const sourceLink = gmailMessageId
+        const resolvedSourceLink = meta.resolveSourceLink?.(item.source) ?? null;
+        const sourceUrl = safeUrl(resolvedSourceLink?.url);
+        const sourceLink = sourceUrl
           ? `
           <span class="dot" aria-hidden="true">·</span>
-          <a class="gmail-link" href="${escapeHtml(gmailMessageUrl(gmailMessageId, meta.gmailUser))}" target="_blank" rel="noopener">Otwórz w Gmailu</a>`
+          <a class="source-link" href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener">${escapeHtml(resolvedSourceLink?.label)}</a>`
           : '';
 
         const articleLink = safeUrl(item.link);
@@ -372,8 +373,8 @@ ${sorted.map(item => {
           ? '<span class="paywall-badge" title="Newsletter wygląda na częściowo albo w całości płatny">Płatne</span>'
           : '';
 
-        const chatButton = item.id
-          ? `<button type="button" class="chat-button" data-newsletter-id="${escapeHtml(item.id)}" data-subject="${escapeHtml(item.subject)}">Chat</button>`
+        const chatButton = item.newsletterId
+          ? `<button type="button" class="chat-button" data-newsletter-id="${escapeHtml(item.newsletterId)}" data-subject="${escapeHtml(item.subject)}">Chat</button>`
           : '';
 
         return `
@@ -520,15 +521,15 @@ ${sorted.map(item => {
     letter-spacing: 0.04em;
   }
 
-  a.gmail-link {
+  a.source-link {
     color: var(--link);
     text-decoration: none;
     font-weight: 600;
     border-bottom: 1px solid transparent;
     white-space: nowrap;
   }
-  a.gmail-link::after { content: " ↗"; font-weight: 400; }
-  a.gmail-link:hover { color: var(--link-hover); border-bottom-color: currentColor; }
+  a.source-link::after { content: " ↗"; font-weight: 400; }
+  a.source-link:hover { color: var(--link-hover); border-bottom-color: currentColor; }
 
   .card .summary {
     margin: 0;

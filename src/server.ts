@@ -1,18 +1,19 @@
-import { execFile } from 'node:child_process';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
 
-import { chatWithArticle, type ChatMessage } from './chatModel.js';
+import type { chatWithArticle, ChatMessage } from './chatModel.js';
 import { loadConfig } from './config.js';
 import type { NewsletterRefresh } from './digest.js';
+import { digestMetaFromSnapshot } from './digestMeta.js';
 import { createApplication } from './composition.js';
 import { createLogger, silentLogger } from './logger.js';
+import { openExternal } from './openExternal.js';
 import { renderDigestPage, renderRunsPage } from './render.js';
 import {
   type DigestArchive,
   type DigestSnapshot,
 } from './store.js';
-import type { AppConfig, AppLogger, DigestItem } from './types.js';
+import type { AppConfig, AppLogger, DigestItem, NewsletterSource, ResolvedSourceLink } from './types.js';
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -39,17 +40,6 @@ async function withChatTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<
   } finally {
     if (timeout) clearTimeout(timeout);
   }
-}
-
-function openUrl(url: string): Promise<void> {
-  return new Promise<void>((resolve) => {
-    if (process.platform !== 'darwin') {
-      resolve();
-      return;
-    }
-
-    execFile('open', [url], () => resolve());
-  });
 }
 
 function sendHtml(res: ServerResponse, statusCode: number, html: string): void {
@@ -110,27 +100,26 @@ export interface ReaderServerDeps {
   config: AppConfig;
   logger?: AppLogger;
   refresh?: NewsletterRefresh;
-  chatWithArticle?: typeof chatWithArticle;
+  chatWithArticle: typeof chatWithArticle;
   chatTimeoutMs?: number;
+  resolveSourceLink?(source: NewsletterSource): ResolvedSourceLink | null;
 }
 
-function renderSnapshot(snapshot: DigestSnapshot, config: AppConfig, extras: { notice?: string; error?: string } = {}): string {
+function renderSnapshot(
+  snapshot: DigestSnapshot,
+  resolveSourceLink: ReaderServerDeps['resolveSourceLink'],
+  extras: { notice?: string; error?: string } = {},
+): string {
   return renderDigestPage(snapshot.items, {
-    ranAt: snapshot.run.ranAt,
-    newCount: snapshot.run.newItems,
-    runId: snapshot.run.id,
-    gmailUser: config.gmailUser,
-    ...(snapshot.run.weather !== undefined ? { weather: snapshot.run.weather } : {}),
-    ...(snapshot.run.hackernews !== undefined ? { hackernews: snapshot.run.hackernews } : {}),
+    ...digestMetaFromSnapshot(snapshot, resolveSourceLink),
     ...extras,
   });
 }
 
-function renderEmpty(config: AppConfig, extras: { notice?: string; error?: string } = {}): string {
+function renderEmpty(extras: { notice?: string; error?: string } = {}): string {
   return renderDigestPage([], {
     ranAt: currentIso(),
     newCount: 0,
-    gmailUser: config.gmailUser,
     ...extras,
   });
 }
@@ -138,7 +127,7 @@ function renderEmpty(config: AppConfig, extras: { notice?: string; error?: strin
 export function createReaderServer(deps: ReaderServerDeps): http.Server {
   const logger = deps.logger ?? silentLogger;
   const refresh = deps.refresh;
-  const chat = deps.chatWithArticle ?? chatWithArticle;
+  const chat = deps.chatWithArticle;
   const chatTimeoutMs = deps.chatTimeoutMs ?? CHAT_TIMEOUT_MS;
 
   return http.createServer(async (req, res) => {
@@ -149,7 +138,7 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
       if (req.method === 'GET' && url.pathname === '/') {
         const snapshot = deps.archive.latestSnapshot();
         const meta = noticeFromUrl(url);
-        sendHtml(res, 200, snapshot ? renderSnapshot(snapshot, deps.config, meta) : renderEmpty(deps.config, meta));
+        sendHtml(res, 200, snapshot ? renderSnapshot(snapshot, deps.resolveSourceLink, meta) : renderEmpty(meta));
         return;
       }
 
@@ -170,7 +159,7 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
           return;
         }
 
-        sendHtml(res, 200, renderSnapshot(snapshot, deps.config, noticeFromUrl(url)));
+        sendHtml(res, 200, renderSnapshot(snapshot, deps.resolveSourceLink, noticeFromUrl(url)));
         return;
       }
 
@@ -227,7 +216,7 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
 
         const startedAt = Date.now();
         const logContext = {
-          newsletterId: item.id,
+          newsletterId: item.newsletterId,
           subject: item.subject,
           model: deps.config.ollamaModel,
         };
@@ -261,7 +250,7 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
         return;
       }
 
-      sendHtml(res, 404, renderEmpty(deps.config, { error: 'Nie znaleziono strony.' }));
+      sendHtml(res, 404, renderEmpty({ error: 'Nie znaleziono strony.' }));
     } catch (err) {
       logger.error({ err: errorMessage(err) }, 'Błąd serwera');
       sendJson(res, 500, { error: 'Błąd serwera.' });
@@ -313,7 +302,7 @@ if (isMain) {
         logger.info('Pominięto startowe pobieranie — otwieram zapisany digest');
       }
 
-      await openUrl(url);
+      await openExternal(url);
     });
 
     process.on('SIGINT', () => {

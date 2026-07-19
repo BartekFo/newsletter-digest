@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { sortNewslettersNewestFirst } from './newsletterOrder.js';
 import type {
   Db,
   DigestItem,
@@ -102,6 +103,7 @@ function createFinalItemTables(db: Db): void {
     CREATE TABLE IF NOT EXISTS run_items (
       run_id INTEGER NOT NULL,
       newsletter_id TEXT NOT NULL,
+      position INTEGER NOT NULL,
       PRIMARY KEY (run_id, newsletter_id),
       FOREIGN KEY (run_id) REFERENCES runs(id),
       FOREIGN KEY (newsletter_id) REFERENCES items(newsletter_id)
@@ -114,7 +116,7 @@ function migrateLegacyIdentity(db: Db): void {
   if (!itemColumns.has('message_id')) return;
   const hasRunItems = tableExists(db, 'run_items');
   const runItemColumns = hasRunItems ? columns(db, 'run_items') : new Set<string>();
-  const value = (name: string, fallback: string) => itemColumns.has(name) ? name : fallback;
+  const legacyColumnOrFallback = (name: string, fallback: string) => itemColumns.has(name) ? name : fallback;
 
   db.pragma('foreign_keys = OFF');
   const migrate = db.transaction(() => {
@@ -140,17 +142,18 @@ function migrateLegacyIdentity(db: Db): void {
         link, is_paywalled, created_at
       )
       SELECT
-        ${value('newsletter_id', "'newsletter-' || lower(hex(randomblob(16)))")},
-        ${value('source_type', "'gmail'")},
-        ${value('source_external_id', 'message_id')},
-        ${value('source_cursor', 'CAST(uid AS TEXT)')},
+        ${legacyColumnOrFallback('newsletter_id', "'newsletter-' || lower(hex(randomblob(16)))")},
+        ${legacyColumnOrFallback('source_type', "'gmail'")},
+        ${legacyColumnOrFallback('source_external_id', 'message_id')},
+        ${legacyColumnOrFallback('source_cursor', 'CAST(uid AS TEXT)')},
         json_object('gmailMessageId', message_id, 'gmailUid', uid),
         sender, subject, date, clean_text, summary,
-        ${value('link', 'NULL')}, ${value('is_paywalled', '0')}, created_at
+        ${legacyColumnOrFallback('link', 'NULL')}, ${legacyColumnOrFallback('is_paywalled', '0')}, created_at
       FROM items;
       CREATE TABLE run_items_next (
         run_id INTEGER NOT NULL,
         newsletter_id TEXT NOT NULL,
+        position INTEGER NOT NULL,
         PRIMARY KEY (run_id, newsletter_id),
         FOREIGN KEY (run_id) REFERENCES runs(id),
         FOREIGN KEY (newsletter_id) REFERENCES items_next(newsletter_id)
@@ -158,14 +161,31 @@ function migrateLegacyIdentity(db: Db): void {
     `);
 
     if (hasRunItems) {
-      const newsletterExpression = runItemColumns.has('newsletter_id')
-        ? 'COALESCE(ri.newsletter_id, migrated.newsletter_id)'
-        : 'migrated.newsletter_id';
+      const relationIdentityConditions = [
+        ...(runItemColumns.has('message_id') ? ['migrated.source_external_id = ri.message_id'] : []),
+        ...(runItemColumns.has('newsletter_id') ? ['migrated.newsletter_id = ri.newsletter_id'] : []),
+      ];
+      if (relationIdentityConditions.length === 0) {
+        throw new Error('Legacy run_items has no recognizable newsletter identity column.');
+      }
       db.exec(`
-        INSERT OR IGNORE INTO run_items_next (run_id, newsletter_id)
-        SELECT ri.run_id, ${newsletterExpression}
+        INSERT OR IGNORE INTO run_items_next (run_id, newsletter_id, position)
+        SELECT ri.run_id, migrated.newsletter_id,
+               ${runItemColumns.has('position')
+                 ? `COALESCE(ri.position, ROW_NUMBER() OVER (
+                     PARTITION BY ri.run_id
+                     ORDER BY datetime(migrated.date) DESC,
+                              CAST(json_extract(migrated.source_metadata_json, '$.gmailUid') AS INTEGER) DESC,
+                              ri.rowid
+                   ) - 1)`
+                 : `ROW_NUMBER() OVER (
+                     PARTITION BY ri.run_id
+                     ORDER BY datetime(migrated.date) DESC,
+                              CAST(json_extract(migrated.source_metadata_json, '$.gmailUid') AS INTEGER) DESC,
+                              ri.rowid
+                   ) - 1`}
         FROM run_items ri
-        JOIN items_next migrated ON migrated.source_external_id = ri.message_id;
+        JOIN items_next migrated ON ${relationIdentityConditions.join(' OR ')};
         DROP TABLE run_items;
       `);
     }
@@ -177,8 +197,11 @@ function migrateLegacyIdentity(db: Db): void {
     `);
   });
 
-  migrate();
-  db.pragma('foreign_keys = ON');
+  try {
+    migrate();
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
 }
 
 export function initSchema(db: Db): void {
@@ -203,6 +226,30 @@ export function initSchema(db: Db): void {
   if (tableExists(db, 'items')) migrateLegacyIdentity(db);
   createFinalItemTables(db);
 
+  const migrateRelationPositions = db.transaction(() => {
+    const runItemColumns = columns(db, 'run_items');
+    if (!runItemColumns.has('position')) db.exec('ALTER TABLE run_items ADD COLUMN position INTEGER');
+    db.exec(`
+      WITH ordered AS (
+        SELECT ri.rowid AS relation_rowid,
+               ROW_NUMBER() OVER (
+                 PARTITION BY ri.run_id
+                 ORDER BY datetime(items.date) DESC,
+                          CAST(json_extract(items.source_metadata_json, '$.gmailUid') AS INTEGER) DESC,
+                          ri.rowid
+               ) - 1 AS position
+        FROM run_items ri
+        JOIN items ON items.newsletter_id = ri.newsletter_id
+      )
+      UPDATE run_items
+      SET position = (
+        SELECT ordered.position FROM ordered WHERE ordered.relation_rowid = run_items.rowid
+      )
+      WHERE position IS NULL;
+    `);
+  });
+  migrateRelationPositions();
+
   db.exec(`
     INSERT OR IGNORE INTO state (key, value)
     SELECT 'source_cursor', value FROM state WHERE key = 'last_uid';
@@ -220,7 +267,7 @@ function setCursor(db: Db, cursor: string): void {
 }
 
 function insertItem(db: Db, item: DigestItem): boolean {
-  const { id, source, sender, subject, date, cleanText, summary, link, isPaywalled } = item;
+  const { newsletterId, source, sender, subject, date, cleanText, summary, link, isPaywalled } = item;
   const result = db.prepare(`
     INSERT OR IGNORE INTO items (
       newsletter_id, source_type, source_external_id, source_cursor,
@@ -228,7 +275,7 @@ function insertItem(db: Db, item: DigestItem): boolean {
       link, is_paywalled, created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `).run(
-    id, source.type, source.externalId, source.cursor, JSON.stringify(source.metadata),
+    newsletterId, source.type, source.externalId, source.cursor, JSON.stringify(source.metadata),
     sender, subject, date, cleanText, summary, link, isPaywalled ? 1 : 0,
   );
   return result.changes === 1;
@@ -253,7 +300,7 @@ function parseJson<T>(value: string | null): T | null {
 
 function rowToItem(row: ItemRow): DigestItem {
   return {
-    id: row.newsletter_id,
+    newsletterId: row.newsletter_id,
     source: {
       type: row.source_type,
       externalId: row.source_external_id,
@@ -272,15 +319,15 @@ function rowToItem(row: ItemRow): DigestItem {
 }
 
 function addRunItems(db: Db, runId: number, newsletterIds: string[]): void {
-  const insert = db.prepare('INSERT OR IGNORE INTO run_items (run_id, newsletter_id) VALUES (?, ?)');
-  for (const newsletterId of newsletterIds) insert.run(runId, newsletterId);
+  const insert = db.prepare('INSERT OR IGNORE INTO run_items (run_id, newsletter_id, position) VALUES (?, ?, ?)');
+  newsletterIds.forEach((newsletterId, position) => insert.run(runId, newsletterId, position));
 }
 
 function publishSnapshot(db: Db, publication: SnapshotPublication): number {
   const publish = db.transaction(({ items, cursor, run }: SnapshotPublication) => {
     for (const item of items) insertItem(db, item);
     const runId = recordRun(db, run);
-    addRunItems(db, runId, items.map((item) => item.id));
+    addRunItems(db, runId, sortNewslettersNewestFirst(items).map((item) => item.newsletterId));
     setCursor(db, cursor);
     return runId;
   });
@@ -313,7 +360,7 @@ function getItemsByRunId(db: Db, runId: number): DigestItem[] {
     SELECT items.* FROM run_items
     JOIN items ON items.newsletter_id = run_items.newsletter_id
     WHERE run_items.run_id = ?
-    ORDER BY datetime(items.date) DESC, items.newsletter_id DESC
+    ORDER BY datetime(items.date) DESC, run_items.position ASC
   `).all(runId) as ItemRow[]).map(rowToItem);
 }
 

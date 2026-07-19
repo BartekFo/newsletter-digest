@@ -22,6 +22,8 @@ Existing snapshot relations are backfilled during schema initialization. Interna
 
 The final schema uses `newsletter_id` as the item and snapshot relation key. The source adapter returns a generic string cursor and generic metadata; only `GmailSourceAdapter` interprets IMAP UIDs, RFC822 message IDs and Gmail deep-link formatting.
 
+Legacy schema migration is the sole compatibility exception: `DigestArchive` may read the stored Gmail UID while backfilling relation positions so existing equal-date snapshots keep their historical order. After that backfill, archive reads use only the source-neutral relation position.
+
 ## Consequences
 
 - Gmail remains the only source in the current scope.

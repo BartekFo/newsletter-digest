@@ -38,7 +38,7 @@ export function buildAppConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 
 export function buildDigestItem(overrides: Partial<DigestItem> = {}): DigestItem {
   return {
-    id: overrides.id ?? 'newsletter-test-1',
+    newsletterId: overrides.newsletterId ?? 'newsletter-test-1',
     source: overrides.source ?? {
       type: 'gmail',
       externalId: '<test-1@example.com>',

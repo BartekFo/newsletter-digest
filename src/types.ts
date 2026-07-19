@@ -18,7 +18,7 @@ export interface AppConfig {
 }
 
 export interface DigestItem {
-  id: string;
+  newsletterId: string;
   source: NewsletterSource;
   sender: string;
   subject: string;
@@ -36,8 +36,13 @@ export interface NewsletterSourceIdentity {
 }
 
 export interface NewsletterSource extends NewsletterSourceIdentity {
-    cursor: string;
-    metadata: Record<string, string | number>;
+  cursor: string;
+  metadata: Record<string, string | number>;
+}
+
+export interface ResolvedSourceLink {
+  url: string;
+  label: string;
 }
 
 export interface SourceNewsletter {
@@ -57,6 +62,7 @@ export interface SourceBatch {
 
 export interface NewsletterSourceAdapter {
   fetch(cursor: string | null): Promise<SourceBatch>;
+  resolveSourceLink?(source: NewsletterSource): ResolvedSourceLink | null;
 }
 
 export interface WeatherSummary {
@@ -81,7 +87,7 @@ export interface DigestMeta {
   ranAt: string;
   newCount: number;
   runId?: number;
-  gmailUser?: string;
+  resolveSourceLink?: (source: NewsletterSource) => ResolvedSourceLink | null;
   weather?: WeatherSummary | null;
   hackernews?: HackerNewsStory[] | null;
 }

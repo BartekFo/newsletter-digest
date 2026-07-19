@@ -19,6 +19,14 @@ export function createGmailSourceAdapter(
   parseMessage = parseMail,
 ): NewsletterSourceAdapter {
   return {
+    resolveSourceLink(source) {
+      if (source.type !== 'gmail') return null;
+      const messageId = gmailMessageIdFromMetadata(source.metadata);
+      return messageId ? {
+        url: gmailMessageUrl(messageId, config.gmailUser),
+        label: 'Otwórz w Gmailu',
+      } : null;
+    },
     async fetch(cursor) {
       const lastUid = cursor == null ? null : Number(cursor);
       const fetched = await fetchMessages(config, Number.isFinite(lastUid) ? lastUid : null);
@@ -48,7 +56,10 @@ export function createGmailSourceAdapter(
       }
 
       return {
-        newsletters,
+        newsletters: newsletters.sort((a, b) => (
+          new Date(b.date).getTime() - new Date(a.date).getTime()
+          || Number(b.source.metadata.gmailUid) - Number(a.source.metadata.gmailUid)
+        )),
         cursor: fetched.length > 0 ? String(maxUid) : cursor,
       };
     },

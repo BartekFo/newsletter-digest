@@ -36,4 +36,37 @@ test('Gmail source adapter owns UID cursor and RFC822 deep-link metadata', async
       gmailUid: 44,
     },
   });
+  assert.match(adapter.resolveSourceLink?.(batch.newsletters[0]!.source)?.url ?? '', /mail\.google\.com/);
+  assert.equal(adapter.resolveSourceLink?.(batch.newsletters[0]!.source)?.label, 'Otwórz w Gmailu');
+  assert.equal(adapter.resolveSourceLink?.({
+    ...batch.newsletters[0]!.source,
+    type: 'rss',
+  }), null);
+});
+
+test('Gmail source adapter preserves the legacy newest-UID order when dates are equal', async () => {
+  const adapter = createGmailSourceAdapter(
+    buildAppConfig(),
+    async () => [
+      { raw: Buffer.from('older-uid'), uid: 44 },
+      { raw: Buffer.from('newer-uid'), uid: 45 },
+    ],
+    async (raw) => ({
+      messageId: `<${raw.toString()}@example.com>`,
+      sender: 'Source',
+      subject: raw.toString(),
+      date: '2026-07-18T08:00:00Z',
+      html: '<p>Body</p>',
+      link: null,
+      isPaywalled: false,
+    }),
+  );
+
+  const batch = await adapter.fetch('43');
+
+  assert.equal(batch.cursor, '45');
+  assert.deepEqual(
+    batch.newsletters.map((newsletter) => newsletter.source.metadata.gmailUid),
+    [45, 44],
+  );
 });

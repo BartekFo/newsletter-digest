@@ -1,6 +1,6 @@
 import nodemailer from 'nodemailer';
 
-import { gmailMessageIdFromMetadata, gmailMessageUrl } from './gmailSource.js';
+import { sortNewslettersNewestFirst } from './newsletterOrder.js';
 import { escapeHtml, safeUrl } from './renderUtils.js';
 import type { AppConfig, DigestItem, DigestMeta } from './types.js';
 
@@ -37,7 +37,7 @@ function newItemsLabel(count: number): string {
 }
 
 export function buildDigestEmail(items: DigestItem[], meta: DigestMeta): DigestEmailMessage {
-  const sorted = [...items].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const sorted = sortNewslettersNewestFirst(items);
   const label = newItemsLabel(meta.newCount);
 
   const weatherHtml = meta.weather
@@ -52,8 +52,8 @@ export function buildDigestEmail(items: DigestItem[], meta: DigestMeta): DigestE
     const subject = articleUrl
       ? `<a href="${escapeHtml(articleUrl)}" style="color:#1b1a17;text-decoration:none">${escapeHtml(item.subject)}</a>`
       : escapeHtml(item.subject);
-    const gmailMessageId = gmailMessageIdFromMetadata(item.source.metadata);
-    const gmailUrl = gmailMessageId ? gmailMessageUrl(gmailMessageId, meta.gmailUser) : null;
+    const resolvedSourceLink = meta.resolveSourceLink?.(item.source) ?? null;
+    const sourceUrl = safeUrl(resolvedSourceLink?.url);
     const summary = item.summary ?? '(brak streszczenia)';
 
     return `<div style="margin:0 0 14px;padding:22px;background:#ffffff;border:1px solid #e4e0d6;border-radius:12px">
@@ -64,8 +64,8 @@ export function buildDigestEmail(items: DigestItem[], meta: DigestMeta): DigestE
       <p style="margin:0;color:#4a463e;font-size:16px;line-height:1.6">${escapeHtml(summary)}</p>
       <div style="margin-top:14px;font-size:13px">
         ${articleUrl ? `<a href="${escapeHtml(articleUrl)}" style="color:#2f5d50">Otwórz artykuł</a>` : ''}
-        ${articleUrl && gmailUrl ? ' &nbsp;·&nbsp; ' : ''}
-        ${gmailUrl ? `<a href="${escapeHtml(gmailUrl)}" style="color:#2f5d50">Otwórz w Gmailu</a>` : ''}
+        ${articleUrl && sourceUrl ? ' &nbsp;·&nbsp; ' : ''}
+        ${sourceUrl ? `<a href="${escapeHtml(sourceUrl)}" style="color:#2f5d50">${escapeHtml(resolvedSourceLink?.label)}</a>` : ''}
       </div>
     </div>`;
   }).join('\n');
@@ -86,8 +86,7 @@ export function buildDigestEmail(items: DigestItem[], meta: DigestMeta): DigestE
     : '';
 
   const textItems = sorted.map((item) => {
-    const gmailMessageId = gmailMessageIdFromMetadata(item.source.metadata);
-    const links = [safeUrl(item.link), gmailMessageId ? gmailMessageUrl(gmailMessageId, meta.gmailUser) : null]
+    const links = [safeUrl(item.link), safeUrl(meta.resolveSourceLink?.(item.source)?.url)]
       .filter((url): url is string => Boolean(url))
       .join('\n');
     return `${item.subject}\n${item.sender} · ${formatDate(item.date)}\n${item.summary ?? '(brak streszczenia)'}${links ? `\n${links}` : ''}`;

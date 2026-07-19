@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderDigestPage, renderRunsPage } from '../src/render.js';
+import { gmailMessageIdFromMetadata, gmailMessageUrl } from '../src/gmailSource.js';
 import type {
   DigestItem,
   DigestMeta,
@@ -10,7 +11,7 @@ import type {
 import { buildDigestItem } from './builders.js';
 
 const ITEM_A = buildDigestItem({
-  id: 'newsletter-a',
+  newsletterId: 'newsletter-a',
   source: { type: 'gmail', externalId: '<a@test>', cursor: '1', metadata: { gmailMessageId: '<a@test>', gmailUid: 1 } },
   sender: 'Alice <alice@example.com>',
   subject: 'Newsletter January',
@@ -21,7 +22,7 @@ const ITEM_A = buildDigestItem({
 });
 
 const ITEM_B = buildDigestItem({
-  id: 'newsletter-b',
+  newsletterId: 'newsletter-b',
   source: { type: 'gmail', externalId: '<b@test>', cursor: '2', metadata: { gmailMessageId: '<b@test>', gmailUid: 2 } },
   sender: 'Bob <bob@example.com>',
   subject: 'Newsletter February',
@@ -31,7 +32,14 @@ const ITEM_B = buildDigestItem({
   isPaywalled: false,
 });
 
-const META: DigestMeta = { ranAt: '2024-03-01T08:00:00.000Z', newCount: 2 };
+const META: DigestMeta = {
+  ranAt: '2024-03-01T08:00:00.000Z',
+  newCount: 2,
+  resolveSourceLink: (source) => {
+    const messageId = gmailMessageIdFromMetadata(source.metadata);
+    return messageId ? { url: gmailMessageUrl(messageId), label: 'Otwórz w Gmailu' } : null;
+  },
+};
 const renderHtml = renderDigestPage;
 
 function renderUnknownItems(items: unknown, meta: DigestMeta = META): string {
@@ -108,10 +116,20 @@ test('item with Gmail source metadata renders a deep-link containing rfc822msgid
   // ITEM_A.messageId is '<a@test>' — encodeURIComponent encodes < > @ so check encoded form
   assert.ok(html.includes(encodeURIComponent('<a@test>')), 'encoded messageId not in href');
   assert.ok(html.includes('mail.google.com'), 'Gmail domain missing');
+  assert.ok(html.includes('Otwórz w Gmailu'), 'existing Gmail link label changed');
 });
 
 test('Gmail deep-link targets configured newsletter account when present', () => {
-  const html = renderHtml([ITEM_A], { ...META, gmailUser: 'newsletters@example.com' });
+  const html = renderHtml([ITEM_A], {
+    ...META,
+    resolveSourceLink: (source) => {
+      const messageId = gmailMessageIdFromMetadata(source.metadata);
+      return messageId ? {
+        url: gmailMessageUrl(messageId, 'newsletters@example.com'),
+        label: 'Otwórz w Gmailu',
+      } : null;
+    },
+  });
 
   assert.ok(
     html.includes('/mail/u/newsletters%40example.com/#search/'),
@@ -153,7 +171,7 @@ test('item renders a Chat button with internal newsletter identity', () => {
   const html = renderHtml([ITEM_A], META);
 
   assert.ok(html.includes('class="chat-button"'), 'chat button missing');
-  assert.ok(html.includes(`data-newsletter-id="${ITEM_A.id}"`), 'newsletter id data attribute missing');
+  assert.ok(html.includes(`data-newsletter-id="${ITEM_A.newsletterId}"`), 'newsletter id data attribute missing');
 });
 
 test('render does not include cleanText body', () => {

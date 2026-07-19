@@ -6,6 +6,7 @@ import { createLogger, silentLogger } from './logger.js';
 import {
   type DigestEmailMessage,
 } from './email.js';
+import { digestMetaFromSnapshot } from './digestMeta.js';
 import type { DigestArchive } from './store.js';
 import type {
   AppConfig,
@@ -34,7 +35,6 @@ export interface DigestDeps {
   fetchTopStories(n: number, logger: AppLogger): Promise<HackerNewsStory[] | null>;
   writeFile?(path: string, content: string): Promise<void>;
   openFile?(path: string): Promise<void>;
-  now(): Date;
   logger?: AppLogger;
 }
 
@@ -59,8 +59,7 @@ export function createNewsletterRefresh(deps: DigestDeps): NewsletterRefresh {
  *
  * deps shape:
  *   archive       — publication, recovery and read interface
- *   config        — { gmailUser, gmailAppPassword, imapFolder, bootstrapDays,
- *                     ollamaModel, dbPath, outPath }
+ *   config        — application settings for model, enrichments and delivery
  *   source.fetch(cursor)              → Promise<{newsletters, cursor}>
  *   extractText(html)                 → Promise<string>
  *   summarize(text, model)            → Promise<string>
@@ -69,7 +68,6 @@ export function createNewsletterRefresh(deps: DigestDeps): NewsletterRefresh {
  *   fetchTopStories(n)                → Promise<object[]|null>
  *   writeFile(path, content)          → Promise<void>
  *   openFile(path)                    → Promise<void>
- *   now()                             → Date
  *   logger                            → pino-compatible logger (optional; silent by default)
  *
  * @returns {Promise<{fetched: number, newItems: number, runId: number | null}>}
@@ -88,7 +86,6 @@ async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
     fetchTopStories: hackernewsFn,
     writeFile,
     openFile: open,
-    now,
     logger = silentLogger,
   } = deps;
 
@@ -98,7 +95,7 @@ async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
   let fetchedCount = 0;
   let newItemCount = 0;
   const stagedItems: DigestItem[] = [];
-  const stagedMessageIds = new Set<string>();
+  const stagedSourceIdentities = new Set<string>();
 
   try {
     logger.info({ cursor }, 'Pobieram nowe newslettery ze źródła…');
@@ -108,7 +105,7 @@ async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
 
     for (const newsletter of batch.newsletters) {
       const sourceKey = `${newsletter.source.type}\0${newsletter.source.externalId}`;
-      if (archive.isKnown(newsletter.source) || stagedMessageIds.has(sourceKey)) {
+      if (archive.isKnown(newsletter.source) || stagedSourceIdentities.has(sourceKey)) {
         logger.debug({ newsletter: newsletter.source.externalId, subject: newsletter.subject }, 'Pomijam — już znana');
         continue;
       }
@@ -116,7 +113,7 @@ async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
       const cleanText = await extract(newsletter.html);
 
       const item: DigestItem = {
-        id: randomUUID(),
+        newsletterId: randomUUID(),
         source: newsletter.source,
         sender: newsletter.sender,
         subject: newsletter.subject,
@@ -128,7 +125,7 @@ async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
       };
 
       logger.info(
-        { newsletterId: item.id, sender: newsletter.sender, subject: newsletter.subject, model: config.ollamaModel },
+        { newsletterId: item.newsletterId, sender: newsletter.sender, subject: newsletter.subject, model: config.ollamaModel },
         'Streszczam (lokalny model — może chwilę potrwać)…',
       );
       const summaryStartMs = Date.now();
@@ -138,7 +135,7 @@ async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
 
         item.summary = summary;
         logger.info(
-          { newsletterId: item.id, subject: newsletter.subject, ms: Date.now() - summaryStartMs },
+          { newsletterId: item.newsletterId, subject: newsletter.subject, ms: Date.now() - summaryStartMs },
           'Streszczono',
         );
       } catch (err) {
@@ -146,14 +143,14 @@ async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
         // summary null (render shows "(brak streszczenia)") and keep going so the
         // item still reaches the digest and the cursor still advances past it.
         logger.error(
-        { newsletterId: item.id, sourceId: newsletter.source.externalId, err: errorMessage(err), ms: Date.now() - summaryStartMs },
+          { newsletterId: item.newsletterId, sourceId: newsletter.source.externalId, err: errorMessage(err), ms: Date.now() - summaryStartMs },
           'Streszczenie nieudane — pomijam, zostawiam placeholder',
         );
       }
 
       newItemCount++;
       stagedItems.push(item);
-      stagedMessageIds.add(sourceKey);
+      stagedSourceIdentities.add(sourceKey);
     }
 
     if (newItemCount === 0) {
@@ -176,13 +173,6 @@ async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
       hackernewsFn(6, logger).catch(() => null),
     ]);
 
-    const digestMeta = {
-      ranAt: now().toISOString(),
-      newCount: newItemCount,
-      gmailUser: config.gmailUser,
-      weather,
-      hackernews,
-    };
     const durationMs = Date.now() - startMs;
     const publicationCursor = batch.cursor ?? stagedItems.at(-1)?.source.cursor;
     if (!publicationCursor) throw new Error('Source did not provide a publication cursor.');
@@ -204,6 +194,7 @@ async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
     const publishedSnapshot = archive.getSnapshot(runId);
     if (!publishedSnapshot) throw new Error(`Published snapshot #${runId} is not readable.`);
     const publishedItems = publishedSnapshot.items;
+    const digestMeta: DigestMeta = digestMetaFromSnapshot(publishedSnapshot, source.resolveSourceLink);
     if (render && writeFile) try {
       const html = render(publishedItems, digestMeta);
       await writeFile(config.outPath, html);
@@ -238,7 +229,7 @@ async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
       fetched: fetchedCount,
       newItems: newItemCount,
       runId,
-      newsletterIds: publishedItems.map((item) => item.id),
+      newsletterIds: publishedItems.map((item) => item.newsletterId),
     };
   } catch (err) {
     logger.error(

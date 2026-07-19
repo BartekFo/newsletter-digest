@@ -44,9 +44,9 @@ export function createBrowserChatSession(options: {
   let sending = false;
 
   return {
-    open(nextMessageId, subject) {
+    open(nextNewsletterId, subject) {
       if (sending) return false;
-      newsletterId = nextMessageId;
+      newsletterId = nextNewsletterId;
       history = [];
       options.view.reset(subject || 'Chat');
       options.view.setSending(false);

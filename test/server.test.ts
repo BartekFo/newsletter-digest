@@ -17,7 +17,7 @@ const CONFIG = buildAppConfig({
 });
 
 const ITEM = buildDigestItem({
-  id: 'newsletter-chat',
+  newsletterId: 'newsletter-chat',
   source: { type: 'gmail', externalId: '<chat@test>', cursor: '1', metadata: { gmailMessageId: '<chat@test>', gmailUid: 1 } },
   sender: 'News <news@example.com>',
   subject: 'Chat Newsletter',
@@ -28,7 +28,7 @@ const ITEM = buildDigestItem({
   isPaywalled: false,
 });
 
-type ServerOptions = Omit<ReaderServerDeps, 'archive' | 'config'>;
+type ServerOptions = Partial<Omit<ReaderServerDeps, 'archive' | 'config'>>;
 
 interface ServerContext {
   archive: DigestArchive;
@@ -56,11 +56,15 @@ async function withServer(options: ServerOptions, fn: ServerCallback): Promise<v
   initSchema(db);
   const archive = createDigestArchive(db);
 
+  const {
+    chatWithArticle = async () => 'Test answer',
+    ...serverOptions
+  } = options;
   const server = createReaderServer({
     archive,
     config: CONFIG,
-    chatWithArticle: async () => 'Test answer',
-    ...options,
+    ...serverOptions,
+    chatWithArticle,
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -134,6 +138,24 @@ test('GET / renders latest non-empty run', async () => {
   });
 });
 
+test('GET / resolves original links through the configured source adapter', async () => {
+  await withServer({
+    resolveSourceLink: () => ({
+      url: 'https://source.example/original',
+      label: 'Otwórz w źródle',
+    }),
+  }, async ({ archive, baseUrl }) => {
+    publishItem(archive);
+
+    const response = await fetch(`${baseUrl}/`);
+    const html = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.ok(html.includes('href="https://source.example/original"'));
+    assert.ok(html.includes('Otwórz w źródle'));
+  });
+});
+
 test('GET / renders saved weather and HackerNews for latest run', async () => {
   await withServer({}, async ({ archive, baseUrl }) => {
     publishItem(archive, {
@@ -178,7 +200,7 @@ test('POST /chat without newsletterId returns 400', async () => {
 
 test('POST /chat without question returns 400', async () => {
   await withServer({}, async ({ baseUrl }) => {
-    const invalidPayload: unknown = { newsletterId: ITEM.id };
+    const invalidPayload: unknown = { newsletterId: ITEM.newsletterId };
     const response = await postChat(baseUrl, invalidPayload);
     const json = await readJsonObject(response);
 
@@ -210,7 +232,7 @@ test('POST /chat for known item returns answer JSON', async () => {
     publishItem(archive);
 
     const response = await postChat(baseUrl, {
-      newsletterId: ITEM.id,
+      newsletterId: ITEM.newsletterId,
       question: 'Co tu jest?',
       history: [{ role: 'user', content: 'Wczesniejsze pytanie' }],
     });
@@ -245,7 +267,7 @@ test('POST /chat stops waiting for an unresponsive model and logs the timeout', 
     publishItem(archive);
 
     const response = await postChat(baseUrl, {
-      newsletterId: ITEM.id,
+      newsletterId: ITEM.newsletterId,
       question: 'Co tu jest?',
     });
     const json = await readJsonObject(response);
@@ -261,7 +283,7 @@ test('POST /chat stops waiting for an unresponsive model and logs the timeout', 
 test('POST /refresh invokes the small refresh use-case and redirects to its snapshot', async () => {
   await withServer({
     refresh: {
-      refresh: async () => ({ fetched: 1, newItems: 1, runId: 1, newsletterIds: [ITEM.id] }),
+      refresh: async () => ({ fetched: 1, newItems: 1, runId: 1, newsletterIds: [ITEM.newsletterId] }),
     },
   }, async ({ baseUrl }) => {
     const response = await fetch(`${baseUrl}/refresh`, { method: 'POST', redirect: 'manual' });
