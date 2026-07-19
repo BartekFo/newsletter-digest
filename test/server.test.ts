@@ -222,11 +222,13 @@ test('GET /newsletters orders newest first with insertion order as the equal-dat
     publishItems(archive, [
       buildDigestItem({ newsletterId: 'newsletter-first', source: { type: 'test', externalId: 'first', cursor: '1', metadata: {} }, subject: 'Inserted first', date: sameDate }),
       buildDigestItem({ newsletterId: 'newsletter-second', source: { type: 'test', externalId: 'second', cursor: '2', metadata: {} }, subject: 'Inserted second', date: sameDate }),
+      buildDigestItem({ newsletterId: 'newsletter-ms-newer', source: { type: 'test', externalId: 'ms-newer', cursor: '3', metadata: {} }, subject: 'Milliseconds newer', date: '2026-07-03T08:00:00.500Z' }),
       buildDigestItem({ newsletterId: 'newsletter-older', source: { type: 'test', externalId: 'older', cursor: '3', metadata: {} }, subject: 'Older newsletter', date: '2026-07-02T08:00:00.000Z' }),
     ]);
 
     const html = await (await fetch(`${baseUrl}/newsletters`)).text();
 
+    assert.ok(html.indexOf('Milliseconds newer') < html.indexOf('Inserted first'));
     assert.ok(html.indexOf('Inserted first') < html.indexOf('Inserted second'));
     assert.ok(html.indexOf('Inserted second') < html.indexOf('Older newsletter'));
   });

@@ -458,7 +458,7 @@ function listNewsletters(db: Db, criteria: ArchiveCriteria): ArchivePage {
   const items = (db.prepare(`
     SELECT items.* FROM ${fromSql}
     ${whereSql}
-    ORDER BY datetime(items.date) DESC, items.rowid ASC
+    ORDER BY julianday(items.date) DESC, items.rowid ASC
     LIMIT ? OFFSET ?
   `).all(...searchParams, ARCHIVE_PAGE_SIZE, (page - 1) * ARCHIVE_PAGE_SIZE) as ItemRow[]).map(rowToItem);
   const totalPages = Math.ceil(total / ARCHIVE_PAGE_SIZE);
