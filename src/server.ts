@@ -8,8 +8,15 @@ import { digestMetaFromSnapshot } from './digestMeta.js';
 import { createApplication } from './composition.js';
 import { createLogger, silentLogger } from './logger.js';
 import { openExternal } from './openExternal.js';
-import { renderDigestPage, renderRunsPage } from './render.js';
 import {
+  renderArchivePage,
+  renderDigestPage,
+  renderNewsletterPage,
+  renderRunsPage,
+  type ArchiveFilterValues,
+} from './render.js';
+import {
+  type ArchiveCriteria,
   type DigestArchive,
   type DigestSnapshot,
 } from './store.js';
@@ -124,6 +131,103 @@ function renderEmpty(extras: { notice?: string; error?: string } = {}): string {
   });
 }
 
+function isCalendarDate(value: string): boolean {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match?.[1] || !match[2] || !match[3]) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+function nextCalendarDate(value: string): string {
+  const [year, month, day] = value.split('-').map(Number) as [number, number, number];
+  const next = new Date(Date.UTC(year, month - 1, day + 1));
+  return [next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate()]
+    .map((part, index) => index === 0 ? String(part) : String(part).padStart(2, '0'))
+    .join('-');
+}
+
+function warsawMidnightIso(value: string): string {
+  const [year, month, day] = value.split('-').map(Number) as [number, number, number];
+  const desiredLocalEpoch = Date.UTC(year, month - 1, day);
+  const formatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Warsaw',
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  let instant = desiredLocalEpoch;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(instant)).map((part) => [part.type, part.value]));
+    const representedLocalEpoch = Date.UTC(
+      Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+      Number(parts.hour), Number(parts.minute), Number(parts.second),
+    );
+    instant += desiredLocalEpoch - representedLocalEpoch;
+  }
+  return new Date(instant).toISOString();
+}
+
+type ParsedArchiveRequest =
+  | { criteria: ArchiveCriteria; filters: ArchiveFilterValues }
+  | { error: string; filters: ArchiveFilterValues };
+
+function parseArchiveRequest(url: URL): ParsedArchiveRequest {
+  const rawPage = url.searchParams.get('page') ?? '1';
+  const query = url.searchParams.get('q')?.trim() || undefined;
+  const sender = url.searchParams.get('sender')?.trim() || undefined;
+  const from = url.searchParams.get('from')?.trim() || undefined;
+  const to = url.searchParams.get('to')?.trim() || undefined;
+  const rawPaywall = url.searchParams.get('paywall')?.trim() || undefined;
+  const rawSummary = url.searchParams.get('summary')?.trim() || undefined;
+  const filters: ArchiveFilterValues = {
+    ...(query ? { query } : {}),
+    ...(sender ? { sender } : {}),
+    ...(from ? { from } : {}),
+    ...(to ? { to } : {}),
+    ...(rawPaywall === 'paid' || rawPaywall === 'free' ? { paywall: rawPaywall } : {}),
+    ...(rawSummary === 'with' || rawSummary === 'without' ? { summary: rawSummary } : {}),
+  };
+
+  if (!/^\d+$/.test(rawPage) || Number(rawPage) < 1) {
+    return { error: 'Niepoprawne filtry archiwum: Numer strony musi być dodatnią liczbą całkowitą.', filters };
+  }
+  if (from && !isCalendarDate(from)) {
+    return { error: 'Niepoprawne filtry archiwum: data „od” musi mieć format RRRR-MM-DD.', filters };
+  }
+  if (to && !isCalendarDate(to)) {
+    return { error: 'Niepoprawne filtry archiwum: data „do” musi mieć format RRRR-MM-DD.', filters };
+  }
+  if (from && to && from > to) {
+    return { error: 'Niepoprawne filtry archiwum: data „od” nie może być późniejsza niż data „do”.', filters };
+  }
+  if (rawPaywall && rawPaywall !== 'paid' && rawPaywall !== 'free') {
+    return { error: 'Niepoprawne filtry archiwum: nieobsługiwany filtr paywalla.', filters };
+  }
+  if (rawSummary && rawSummary !== 'with' && rawSummary !== 'without') {
+    return { error: 'Niepoprawne filtry archiwum: nieobsługiwany filtr streszczenia.', filters };
+  }
+
+  return {
+    filters,
+    criteria: {
+      page: Number(rawPage),
+      ...(query ? { query } : {}),
+      ...(sender ? { sender } : {}),
+      ...(from ? { fromInclusive: warsawMidnightIso(from) } : {}),
+      ...(to ? { toExclusive: warsawMidnightIso(nextCalendarDate(to)) } : {}),
+      ...(rawPaywall ? { paywall: rawPaywall === 'paid' } : {}),
+      ...(rawSummary ? { hasSummary: rawSummary === 'with' } : {}),
+    },
+  };
+}
+
 export function createReaderServer(deps: ReaderServerDeps): http.Server {
   const logger = deps.logger ?? silentLogger;
   const refresh = deps.refresh;
@@ -144,6 +248,44 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
 
       if (req.method === 'GET' && url.pathname === '/runs') {
         sendHtml(res, 200, renderRunsPage(deps.archive.listSnapshots(), { ranAt: currentIso(), ...noticeFromUrl(url) }));
+        return;
+      }
+
+      if (req.method === 'GET' && url.pathname === '/newsletters') {
+        const parsed = parseArchiveRequest(url);
+        if ('error' in parsed) {
+          sendHtml(res, 400, renderArchivePage(
+            deps.archive.listNewsletters({ page: 1 }),
+            parsed.error,
+            parsed.filters,
+          ));
+          return;
+        }
+
+        sendHtml(res, 200, renderArchivePage(
+          deps.archive.listNewsletters(parsed.criteria),
+          undefined,
+          parsed.filters,
+        ));
+        return;
+      }
+
+      const newsletterMatch = url.pathname.match(/^\/newsletters\/([^/]+)$/);
+      if (req.method === 'GET' && newsletterMatch?.[1]) {
+        let newsletterId: string;
+        try {
+          newsletterId = decodeURIComponent(newsletterMatch[1]);
+        } catch {
+          sendHtml(res, 404, renderNewsletterPage(null));
+          return;
+        }
+        const item = deps.archive.getNewsletter(newsletterId);
+        if (!item) {
+          sendHtml(res, 404, renderNewsletterPage(null));
+          return;
+        }
+        const sourceLink = deps.resolveSourceLink?.(item.source) ?? null;
+        sendHtml(res, 200, renderNewsletterPage(item, sourceLink));
         return;
       }
 

@@ -57,6 +57,30 @@ export interface DigestSnapshot {
   items: DigestItem[];
 }
 
+export const ARCHIVE_PAGE_SIZE = 25;
+
+export interface ArchiveCriteria {
+  page: number;
+  query?: string;
+  sender?: string;
+  fromInclusive?: string;
+  toExclusive?: string;
+  paywall?: boolean;
+  hasSummary?: boolean;
+}
+
+export interface ArchivePage {
+  items: DigestItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  hasPrevious: boolean;
+  hasNext: boolean;
+  criteria: ArchiveCriteria;
+  senders: string[];
+}
+
 export interface DigestArchive {
   getCursor(): string | null;
   isKnown(source: NewsletterSourceIdentity): boolean;
@@ -65,6 +89,7 @@ export interface DigestArchive {
   latestSnapshot(): DigestSnapshot | null;
   listSnapshots(): RunSummary[];
   getSnapshot(runId: number): DigestSnapshot | null;
+  listNewsletters(criteria: ArchiveCriteria): ArchivePage;
   getNewsletter(newsletterId: string): DigestItem | null;
   close(): void;
 }
@@ -255,6 +280,21 @@ export function initSchema(db: Db): void {
     SELECT 'source_cursor', value FROM state WHERE key = 'last_uid';
     DELETE FROM state WHERE key = 'last_uid';
   `);
+
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
+      newsletter_id UNINDEXED,
+      subject,
+      sender,
+      summary,
+      clean_text,
+      tokenize = 'unicode61 remove_diacritics 2'
+    );
+    INSERT INTO items_fts (rowid, newsletter_id, subject, sender, summary, clean_text)
+    SELECT items.rowid, items.newsletter_id, items.subject, items.sender, items.summary, items.clean_text
+    FROM items
+    WHERE NOT EXISTS (SELECT 1 FROM items_fts WHERE items_fts.rowid = items.rowid);
+  `);
 }
 
 function getCursor(db: Db): string | null {
@@ -278,7 +318,15 @@ function insertItem(db: Db, item: DigestItem): boolean {
     newsletterId, source.type, source.externalId, source.cursor, JSON.stringify(source.metadata),
     sender, subject, date, cleanText, summary, link, isPaywalled ? 1 : 0,
   );
-  return result.changes === 1;
+  if (result.changes === 1) {
+    const row = db.prepare('SELECT rowid FROM items WHERE newsletter_id = ?').get(newsletterId) as { rowid: number };
+    db.prepare(`
+      INSERT INTO items_fts (rowid, newsletter_id, subject, sender, summary, clean_text)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(row.rowid, newsletterId, subject, sender, summary, cleanText);
+    return true;
+  }
+  return false;
 }
 
 function recordRun(db: Db, { fetched, newItems, durationMs, ok, weather, hackernews }: RunRecord): number {
@@ -364,6 +412,74 @@ function getItemsByRunId(db: Db, runId: number): DigestItem[] {
   `).all(runId) as ItemRow[]).map(rowToItem);
 }
 
+function safeFtsQuery(query: string | undefined): string | null {
+  const terms = query?.match(/[\p{L}\p{N}_]+/gu) ?? [];
+  if (terms.length === 0) return null;
+  return terms.map((term) => `"${term.replace(/"/g, '""')}"`).join(' AND ');
+}
+
+function listNewsletters(db: Db, criteria: ArchiveCriteria): ArchivePage {
+  const { page } = criteria;
+  const ftsQuery = safeFtsQuery(criteria.query);
+  const fromSql = ftsQuery
+    ? 'items JOIN items_fts ON items_fts.rowid = items.rowid'
+    : 'items';
+  const conditions: string[] = [];
+  const searchParams: Array<string | number> = [];
+  if (ftsQuery) {
+    conditions.push('items_fts MATCH ?');
+    searchParams.push(ftsQuery);
+  }
+  if (criteria.sender) {
+    conditions.push('items.sender = ?');
+    searchParams.push(criteria.sender);
+  }
+  if (criteria.fromInclusive) {
+    conditions.push('datetime(items.date) >= datetime(?)');
+    searchParams.push(criteria.fromInclusive);
+  }
+  if (criteria.toExclusive) {
+    conditions.push('datetime(items.date) < datetime(?)');
+    searchParams.push(criteria.toExclusive);
+  }
+  if (criteria.paywall !== undefined) {
+    conditions.push('items.is_paywalled = ?');
+    searchParams.push(criteria.paywall ? 1 : 0);
+  }
+  if (criteria.hasSummary !== undefined) {
+    conditions.push(criteria.hasSummary
+      ? "items.summary IS NOT NULL AND trim(items.summary) <> ''"
+      : "(items.summary IS NULL OR trim(items.summary) = '')");
+  }
+  const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const total = (db.prepare(`SELECT COUNT(*) AS count FROM ${fromSql} ${whereSql}`).get(
+    ...searchParams,
+  ) as { count: number }).count;
+  const items = (db.prepare(`
+    SELECT items.* FROM ${fromSql}
+    ${whereSql}
+    ORDER BY datetime(items.date) DESC, items.rowid ASC
+    LIMIT ? OFFSET ?
+  `).all(...searchParams, ARCHIVE_PAGE_SIZE, (page - 1) * ARCHIVE_PAGE_SIZE) as ItemRow[]).map(rowToItem);
+  const totalPages = Math.ceil(total / ARCHIVE_PAGE_SIZE);
+
+  return {
+    items,
+    total,
+    page,
+    pageSize: ARCHIVE_PAGE_SIZE,
+    totalPages,
+    hasPrevious: page > 1,
+    hasNext: page < totalPages,
+    criteria,
+    senders: (db.prepare(`
+      SELECT DISTINCT sender FROM items
+      WHERE sender IS NOT NULL AND trim(sender) <> ''
+      ORDER BY sender COLLATE NOCASE ASC, sender ASC
+    `).all() as { sender: string }[]).map((row) => row.sender),
+  };
+}
+
 export function createDigestArchive(db: Db): DigestArchive {
   const getSnapshot = (runId: number): DigestSnapshot | null => {
     const run = getRunSummaries(db).find((candidate) => candidate.id === runId);
@@ -383,6 +499,7 @@ export function createDigestArchive(db: Db): DigestArchive {
     },
     listSnapshots: () => getRunSummaries(db),
     getSnapshot,
+    listNewsletters: (criteria) => listNewsletters(db, criteria),
     getNewsletter(newsletterId) {
       const row = db.prepare('SELECT * FROM items WHERE newsletter_id = ?').get(newsletterId) as ItemRow | undefined;
       return row ? rowToItem(row) : null;
