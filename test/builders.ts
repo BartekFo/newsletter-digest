@@ -1,19 +1,19 @@
 import type {
   AppConfig,
   DigestItem,
-  FetchedMessage,
-  ParsedMail,
 } from '../src/types.js';
+import type { GmailFetchedMessage } from '../src/imap.js';
+import type { ParsedMail } from '../src/parse.js';
 
 export interface NewsletterFixture {
-  message: FetchedMessage;
+  message: GmailFetchedMessage;
   parsed: ParsedMail;
   cleanText: string;
   summary: string;
 }
 
 export interface NewsletterFixtureOverrides {
-  message?: Partial<FetchedMessage>;
+  message?: Partial<GmailFetchedMessage>;
   parsed?: Partial<ParsedMail>;
   cleanText?: string;
   summary?: string;
@@ -38,8 +38,16 @@ export function buildAppConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 
 export function buildDigestItem(overrides: Partial<DigestItem> = {}): DigestItem {
   return {
-    messageId: '<test-1@example.com>',
-    uid: 101,
+    newsletterId: overrides.newsletterId ?? 'newsletter-test-1',
+    source: overrides.source ?? {
+      type: 'gmail',
+      externalId: '<test-1@example.com>',
+      cursor: '101',
+      metadata: {
+        gmailMessageId: '<test-1@example.com>',
+        gmailUid: 101,
+      },
+    },
     sender: 'newsletter@example.com',
     subject: 'Weekly Digest',
     date: '2026-06-27T10:00:00Z',

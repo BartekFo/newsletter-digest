@@ -1,42 +1,20 @@
-import { execFile } from 'node:child_process';
-import { writeFile as fsWriteFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import { loadConfig } from './config.js';
 import { createLogger, silentLogger } from './logger.js';
-import { fetchNewMessages } from './imap.js';
-import { parseMail } from './parse.js';
-import { extractText } from './extract.js';
 import {
-  buildDigestEmail,
-  sendDigestEmail,
   type DigestEmailMessage,
 } from './email.js';
-import { summarize } from './summarize.js';
-import { renderHtml } from './render.js';
-import { fetchWeather } from './weather.js';
-import { fetchTopStories } from './hackernews.js';
-import {
-  openDb,
-  initSchema,
-  getLastUid,
-  setLastUid,
-  isKnown,
-  insertItem,
-  setSummary,
-  recordRun,
-  addRunItems,
-  getItemsByUids,
-} from './store.js';
+import { digestMetaFromSnapshot } from './digestMeta.js';
+import type { DigestArchive } from './store.js';
 import type {
   AppConfig,
   AppLogger,
-  Db,
   DigestItem,
   DigestMeta,
-  FetchedMessage,
   HackerNewsStory,
-  ParsedMail,
+  NewsletterSourceAdapter,
   WeatherSummary,
 } from './types.js';
 
@@ -44,45 +22,45 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/**
- * Open a file in the system's default application.
- * No-op on non-macOS platforms or when path is absent.
- * @param {string} filePath
- * @returns {Promise<void>}
- */
-function openFile(filePath: string): Promise<void> {
-  return new Promise<void>((resolve) => {
-    execFile('open', [filePath], () => resolve());
-  });
-}
-
 export interface DigestDeps {
-  db: Db;
+  archive: DigestArchive;
   config: AppConfig;
-  fetchNewMessages(config: AppConfig, lastUid: number | null): Promise<FetchedMessage[]>;
-  parseMail(raw: Buffer): Promise<ParsedMail>;
+  source: NewsletterSourceAdapter;
   extractText(html: string): Promise<string>;
   summarize(text: string, model: string): Promise<string>;
-  renderHtml(items: DigestItem[], meta: DigestMeta): string;
+  renderHtml?(items: DigestItem[], meta: DigestMeta): string;
   buildDigestEmail(items: DigestItem[], meta: DigestMeta): DigestEmailMessage;
   sendDigestEmail(config: AppConfig, message: DigestEmailMessage): Promise<void>;
   fetchWeather(config: AppConfig, logger: AppLogger): Promise<WeatherSummary | null>;
   fetchTopStories(n: number, logger: AppLogger): Promise<HackerNewsStory[] | null>;
-  writeFile(path: string, content: string): Promise<void>;
-  openFile(path: string): Promise<void>;
-  now(): Date;
+  writeFile?(path: string, content: string): Promise<void>;
+  openFile?(path: string): Promise<void>;
   logger?: AppLogger;
+}
+
+export interface RefreshResult {
+  fetched: number;
+  newItems: number;
+  runId: number | null;
+  newsletterIds: string[];
+}
+
+export interface NewsletterRefresh {
+  refresh(): Promise<RefreshResult>;
+}
+
+/** Build the small public use-case seam used by Reader and CLI callers. */
+export function createNewsletterRefresh(deps: DigestDeps): NewsletterRefresh {
+  return { refresh: () => runDigest(deps) };
 }
 
 /**
  * Core orchestration function — fully injectable for offline testing.
  *
  * deps shape:
- *   db            — better-sqlite3 db handle (schema already initialised)
- *   config        — { gmailUser, gmailAppPassword, imapFolder, bootstrapDays,
- *                     ollamaModel, dbPath, outPath }
- *   fetchNewMessages(config, lastUid) → Promise<{raw, uid}[]>
- *   parseMail(raw)                    → Promise<{messageId, sender, subject, date, html}>
+ *   archive       — publication, recovery and read interface
+ *   config        — application settings for model, enrichments and delivery
+ *   source.fetch(cursor)              → Promise<{newsletters, cursor}>
  *   extractText(html)                 → Promise<string>
  *   summarize(text, model)            → Promise<string>
  *   renderHtml(items, meta)           → string
@@ -90,17 +68,15 @@ export interface DigestDeps {
  *   fetchTopStories(n)                → Promise<object[]|null>
  *   writeFile(path, content)          → Promise<void>
  *   openFile(path)                    → Promise<void>
- *   now()                             → Date
  *   logger                            → pino-compatible logger (optional; silent by default)
  *
  * @returns {Promise<{fetched: number, newItems: number, runId: number | null}>}
  */
-export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; newItems: number; runId: number | null }> {
+async function runDigest(deps: DigestDeps): Promise<RefreshResult> {
   const {
-    db,
+    archive,
     config,
-    fetchNewMessages: fetch,
-    parseMail: parse,
+    source,
     extractText: extract,
     summarize: summariseFn,
     renderHtml: render,
@@ -110,53 +86,46 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
     fetchTopStories: hackernewsFn,
     writeFile,
     openFile: open,
-    now,
     logger = silentLogger,
   } = deps;
 
   const startMs = Date.now();
-  const lastUid = getLastUid(db);
+  const cursor = archive.getCursor();
 
-  let fetched: FetchedMessage[] | undefined;
-  let newUids: number[] = [];
-  const newMessageIds: string[] = [];
+  let fetchedCount = 0;
+  let newItemCount = 0;
+  const stagedItems: DigestItem[] = [];
+  const stagedSourceIdentities = new Set<string>();
 
   try {
-    logger.info({ lastUid, folder: config.imapFolder }, 'Łączę z Gmail, pobieram nowe wiadomości…');
-    fetched = await fetch(config, lastUid);
-    logger.info({ fetched: fetched.length }, 'Pobrano wiadomości z IMAP');
+    logger.info({ cursor }, 'Pobieram nowe newslettery ze źródła…');
+    const batch = await source.fetch(cursor);
+    fetchedCount = batch.newsletters.length;
+    logger.info({ fetched: fetchedCount }, 'Pobrano newslettery');
 
-    let maxUid = lastUid ?? 0;
-    newUids = [];
-
-    for (const { raw, uid } of fetched) {
-      const mail = await parse(raw);
-
-      // Always advance the cursor past seen UIDs, even already-known ones, so
-      // we don't re-fetch them on the next run (dedup is handled by isKnown).
-      maxUid = Math.max(maxUid, uid);
-
-      if (isKnown(db, mail.messageId)) {
-        logger.debug({ uid, subject: mail.subject }, 'Pomijam — już znana');
+    for (const newsletter of batch.newsletters) {
+      const sourceKey = `${newsletter.source.type}\0${newsletter.source.externalId}`;
+      if (archive.isKnown(newsletter.source) || stagedSourceIdentities.has(sourceKey)) {
+        logger.debug({ newsletter: newsletter.source.externalId, subject: newsletter.subject }, 'Pomijam — już znana');
         continue;
       }
 
-      const cleanText = await extract(mail.html);
+      const cleanText = await extract(newsletter.html);
 
-      insertItem(db, {
-        messageId: mail.messageId,
-        uid,
-        sender: mail.sender,
-        subject: mail.subject,
-        date: mail.date,
+      const item: DigestItem = {
+        newsletterId: randomUUID(),
+        source: newsletter.source,
+        sender: newsletter.sender,
+        subject: newsletter.subject,
+        date: newsletter.date,
         cleanText,
         summary: null,
-        link: mail.link ?? null,
-        isPaywalled: mail.isPaywalled,
-      });
+        link: newsletter.link,
+        isPaywalled: newsletter.isPaywalled,
+      };
 
       logger.info(
-        { uid, sender: mail.sender, subject: mail.subject, model: config.ollamaModel },
+        { newsletterId: item.newsletterId, sender: newsletter.sender, subject: newsletter.subject, model: config.ollamaModel },
         'Streszczam (lokalny model — może chwilę potrwać)…',
       );
       const summaryStartMs = Date.now();
@@ -164,10 +133,9 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
       try {
         const summary = await summariseFn(cleanText, config.ollamaModel);
 
-        // Commit summary immediately (commit-per-mail resilience).
-        setSummary(db, mail.messageId, summary);
+        item.summary = summary;
         logger.info(
-          { uid, subject: mail.subject, ms: Date.now() - summaryStartMs },
+          { newsletterId: item.newsletterId, subject: newsletter.subject, ms: Date.now() - summaryStartMs },
           'Streszczono',
         );
       } catch (err) {
@@ -175,31 +143,27 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
         // summary null (render shows "(brak streszczenia)") and keep going so the
         // item still reaches the digest and the cursor still advances past it.
         logger.error(
-        { uid, messageId: mail.messageId, err: errorMessage(err), ms: Date.now() - summaryStartMs },
+          { newsletterId: item.newsletterId, sourceId: newsletter.source.externalId, err: errorMessage(err), ms: Date.now() - summaryStartMs },
           'Streszczenie nieudane — pomijam, zostawiam placeholder',
         );
       }
 
-      newUids.push(uid);
-      newMessageIds.push(mail.messageId);
+      newItemCount++;
+      stagedItems.push(item);
+      stagedSourceIdentities.add(sourceKey);
     }
 
-    // Advance cursor only after the full loop completes without throwing.
-    if (maxUid > (lastUid ?? 0)) {
-      setLastUid(db, maxUid);
-    }
-
-    if (newUids.length === 0) {
+    if (newItemCount === 0) {
       const durationMs = Date.now() - startMs;
       logger.info(
-        { fetched: fetched.length, durationMs },
+        { fetched: fetchedCount, durationMs },
         'Brak nowych newsletterów — zachowuję poprzedni digest',
       );
-      return { fetched: fetched.length, newItems: 0, runId: null };
+      return { fetched: fetchedCount, newItems: 0, runId: null, newsletterIds: [] };
     }
 
-    logger.info({ newItems: newUids.length }, 'Przetworzono maile, pobieram pogodę i HackerNews…');
-    const items = getItemsByUids(db, newUids);
+    logger.info({ newItems: newItemCount }, 'Przetworzono newslettery, pobieram pogodę i HackerNews…');
+    const items = stagedItems;
 
     // Optional extras — failure-safe: a dead API must not abort the digest.
     // Each fn logs its own failure via the injected logger and returns null;
@@ -209,32 +173,43 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
       hackernewsFn(6, logger).catch(() => null),
     ]);
 
-    const digestMeta = {
-      ranAt: now().toISOString(),
-      newCount: newUids.length,
-      gmailUser: config.gmailUser,
-      weather,
-      hackernews,
-    };
-    const html = render(items, digestMeta);
-
-    await writeFile(config.outPath, html);
-    logger.info({ outPath: config.outPath }, 'Zapisano digest');
-
     const durationMs = Date.now() - startMs;
-    const runId = recordRun(db, {
-      fetched: fetched.length,
-      newItems: newUids.length,
-      durationMs,
-      ok: 1,
-      weather,
-      hackernews,
+    const publicationCursor = batch.cursor ?? stagedItems.at(-1)?.source.cursor;
+    if (!publicationCursor) throw new Error('Source did not provide a publication cursor.');
+    const runId = archive.publishSnapshot({
+      items,
+      cursor: publicationCursor,
+      run: {
+        fetched: fetchedCount,
+        newItems: newItemCount,
+        durationMs,
+        ok: 1,
+        weather,
+        hackernews,
+      },
     });
-    addRunItems(db, runId, newMessageIds);
+
+    // Delivery consumes the committed snapshot, never the in-flight staging
+    // collection. A delivery failure cannot invalidate publication.
+    const publishedSnapshot = archive.getSnapshot(runId);
+    if (!publishedSnapshot) throw new Error(`Published snapshot #${runId} is not readable.`);
+    const publishedItems = publishedSnapshot.items;
+    const digestMeta: DigestMeta = digestMetaFromSnapshot(publishedSnapshot, source.resolveSourceLink);
+    if (render && writeFile) try {
+      const html = render(publishedItems, digestMeta);
+      await writeFile(config.outPath, html);
+      logger.info({ outPath: config.outPath, runId }, 'Zapisano digest');
+      await open?.(config.outPath);
+    } catch (err) {
+      logger.error(
+        { outPath: config.outPath, runId, err: errorMessage(err) },
+        'Nie udało się wyeksportować digestu — opublikowany snapshot pozostaje dostępny',
+      );
+    }
 
     if (config.sendDigestEmail) {
       try {
-        const email = buildEmail(items, digestMeta);
+        const email = buildEmail(publishedItems, digestMeta);
         await sendEmail(config, email);
         logger.info({ recipient: config.digestEmailRecipient, runId }, 'Wysłano digest e-mailem');
       } catch (err) {
@@ -245,24 +220,27 @@ export async function runDigest(deps: DigestDeps): Promise<{ fetched: number; ne
       }
     }
 
-    await open(config.outPath);
-
     logger.info(
-      { fetched: fetched.length, newItems: newUids.length, durationMs },
+      { fetched: fetchedCount, newItems: newItemCount, durationMs },
       'Gotowe',
     );
 
-    return { fetched: fetched.length, newItems: newUids.length, runId: newMessageIds.length > 0 ? runId : null };
+    return {
+      fetched: fetchedCount,
+      newItems: newItemCount,
+      runId,
+      newsletterIds: publishedItems.map((item) => item.newsletterId),
+    };
   } catch (err) {
     logger.error(
       { err: errorMessage(err), durationMs: Date.now() - startMs },
       'Bieg nieudany',
     );
-    recordRun(db, {
-      fetched: fetched?.length ?? 0,
-      newItems: newUids?.length ?? 0,
+    archive.recordFailedRefresh({
+      fetched: fetchedCount,
+      newItems: newItemCount,
       durationMs: Date.now() - startMs,
-      ok: 0,
+      ok: false,
     });
     throw err;
   }
@@ -286,30 +264,19 @@ if (isMain) {
     }
 
     const logger = createLogger(config.logLevel);
-    const db = openDb(config.dbPath);
-    initSchema(db);
+    const { createApplication } = await import('./composition.js');
+    const application = createApplication(config, logger, {
+      staticExport: true,
+      openStaticExport: true,
+    });
 
     try {
-      await runDigest({
-        db,
-        config,
-        fetchNewMessages,
-        parseMail,
-        extractText,
-        summarize,
-        renderHtml,
-        buildDigestEmail,
-        sendDigestEmail,
-        fetchWeather,
-        fetchTopStories,
-        writeFile: (path: string, content: string) => fsWriteFile(path, content, 'utf8'),
-        openFile,
-        now: () => new Date(),
-        logger,
-      });
+      await application.refresh.refresh();
     } catch {
       // runDigest already logged the failure; just set the exit code.
       process.exitCode = 1;
+    } finally {
+      application.close();
     }
   })();
 }

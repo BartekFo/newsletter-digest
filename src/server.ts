@@ -1,28 +1,19 @@
-import { execFile } from 'node:child_process';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
 
-import { chatWithArticle, type ChatMessage } from './chatModel.js';
+import type { chatWithArticle, ChatMessage } from './chatModel.js';
 import { loadConfig } from './config.js';
-import { runDigest, type DigestDeps } from './digest.js';
-import { extractText } from './extract.js';
-import { buildDigestEmail, sendDigestEmail } from './email.js';
-import { fetchTopStories } from './hackernews.js';
-import { fetchNewMessages } from './imap.js';
+import type { NewsletterRefresh } from './digest.js';
+import { digestMetaFromSnapshot } from './digestMeta.js';
+import { createApplication } from './composition.js';
 import { createLogger, silentLogger } from './logger.js';
-import { parseMail } from './parse.js';
-import { renderDigestPage, renderHtml, renderRunsPage } from './render.js';
-import { summarize } from './summarize.js';
+import { openExternal } from './openExternal.js';
+import { renderDigestPage, renderRunsPage } from './render.js';
 import {
-  getItemByMessageId,
-  getItemsByRunId,
-  getLatestNonEmptyRun,
-  getRunSummaries,
-  initSchema,
-  openDb,
+  type DigestArchive,
+  type DigestSnapshot,
 } from './store.js';
-import { fetchWeather } from './weather.js';
-import type { AppConfig, AppLogger, Db, DigestItem, RunSummary } from './types.js';
+import type { AppConfig, AppLogger, DigestItem, NewsletterSource, ResolvedSourceLink } from './types.js';
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -49,17 +40,6 @@ async function withChatTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<
   } finally {
     if (timeout) clearTimeout(timeout);
   }
-}
-
-function openUrl(url: string): Promise<void> {
-  return new Promise<void>((resolve) => {
-    if (process.platform !== 'darwin') {
-      resolve();
-      return;
-    }
-
-    execFile('open', [url], () => resolve());
-  });
 }
 
 function sendHtml(res: ServerResponse, statusCode: number, html: string): void {
@@ -116,61 +96,38 @@ function isChatHistory(value: unknown): value is ChatMessage[] {
 }
 
 export interface ReaderServerDeps {
-  db: Db;
+  archive: DigestArchive;
   config: AppConfig;
   logger?: AppLogger;
-  runDigest?: (deps: DigestDeps) => Promise<{ fetched: number; newItems: number; runId: number | null }>;
-  chatWithArticle?: typeof chatWithArticle;
+  refresh?: NewsletterRefresh;
+  chatWithArticle: typeof chatWithArticle;
   chatTimeoutMs?: number;
-  now?: () => Date;
+  resolveSourceLink?(source: NewsletterSource): ResolvedSourceLink | null;
 }
 
-function createDigestDeps(deps: ReaderServerDeps): DigestDeps {
-  return {
-    db: deps.db,
-    config: deps.config,
-    fetchNewMessages,
-    parseMail,
-    extractText,
-    summarize,
-    renderHtml,
-    buildDigestEmail,
-    sendDigestEmail,
-    fetchWeather,
-    fetchTopStories,
-    writeFile: async () => undefined,
-    openFile: async () => undefined,
-    now: deps.now ?? (() => new Date()),
-    logger: deps.logger ?? silentLogger,
-  };
-}
-
-function renderRun(db: Db, run: RunSummary, config: AppConfig, extras: { notice?: string; error?: string } = {}): string {
-  const items = getItemsByRunId(db, run.id);
-  return renderDigestPage(items, {
-    ranAt: run.ranAt,
-    newCount: run.newItems,
-    runId: run.id,
-    gmailUser: config.gmailUser,
-    ...(run.weather !== undefined ? { weather: run.weather } : {}),
-    ...(run.hackernews !== undefined ? { hackernews: run.hackernews } : {}),
+function renderSnapshot(
+  snapshot: DigestSnapshot,
+  resolveSourceLink: ReaderServerDeps['resolveSourceLink'],
+  extras: { notice?: string; error?: string } = {},
+): string {
+  return renderDigestPage(snapshot.items, {
+    ...digestMetaFromSnapshot(snapshot, resolveSourceLink),
     ...extras,
   });
 }
 
-function renderEmpty(config: AppConfig, extras: { notice?: string; error?: string } = {}): string {
+function renderEmpty(extras: { notice?: string; error?: string } = {}): string {
   return renderDigestPage([], {
     ranAt: currentIso(),
     newCount: 0,
-    gmailUser: config.gmailUser,
     ...extras,
   });
 }
 
 export function createReaderServer(deps: ReaderServerDeps): http.Server {
   const logger = deps.logger ?? silentLogger;
-  const refresh = deps.runDigest ?? runDigest;
-  const chat = deps.chatWithArticle ?? chatWithArticle;
+  const refresh = deps.refresh;
+  const chat = deps.chatWithArticle;
   const chatTimeoutMs = deps.chatTimeoutMs ?? CHAT_TIMEOUT_MS;
 
   return http.createServer(async (req, res) => {
@@ -179,43 +136,44 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
       const url = new URL(req.url ?? '/', `http://${host}`);
 
       if (req.method === 'GET' && url.pathname === '/') {
-        const run = getLatestNonEmptyRun(deps.db);
+        const snapshot = deps.archive.latestSnapshot();
         const meta = noticeFromUrl(url);
-        sendHtml(res, 200, run ? renderRun(deps.db, run, deps.config, meta) : renderEmpty(deps.config, meta));
+        sendHtml(res, 200, snapshot ? renderSnapshot(snapshot, deps.resolveSourceLink, meta) : renderEmpty(meta));
         return;
       }
 
       if (req.method === 'GET' && url.pathname === '/runs') {
-        sendHtml(res, 200, renderRunsPage(getRunSummaries(deps.db), { ranAt: currentIso(), ...noticeFromUrl(url) }));
+        sendHtml(res, 200, renderRunsPage(deps.archive.listSnapshots(), { ranAt: currentIso(), ...noticeFromUrl(url) }));
         return;
       }
 
       const runMatch = url.pathname.match(/^\/runs\/(\d+)$/);
       if (req.method === 'GET' && runMatch?.[1]) {
         const runId = Number(runMatch[1]);
-        const run = getRunSummaries(deps.db).find((summary) => summary.id === runId);
-        if (!run) {
-          sendHtml(res, 404, renderRunsPage(getRunSummaries(deps.db), {
+        const snapshot = deps.archive.getSnapshot(runId);
+        if (!snapshot) {
+          sendHtml(res, 404, renderRunsPage(deps.archive.listSnapshots(), {
             ranAt: currentIso(),
             error: `Nie znaleziono digestu #${runId}.`,
           }));
           return;
         }
 
-        sendHtml(res, 200, renderRun(deps.db, run, deps.config, noticeFromUrl(url)));
+        sendHtml(res, 200, renderSnapshot(snapshot, deps.resolveSourceLink, noticeFromUrl(url)));
         return;
       }
 
       if (req.method === 'POST' && url.pathname === '/refresh') {
         try {
-          const result = await refresh(createDigestDeps(deps));
+          if (!refresh) throw new Error('Newsletter refresh is not configured.');
+          const result = await refresh.refresh();
           if (result.runId != null) {
             redirect(res, `/runs/${result.runId}?notice=${encodeURIComponent('Pobrano nowe newslettery.')}`);
             return;
           }
 
-          const latest = getLatestNonEmptyRun(deps.db);
-          redirect(res, `${latest ? `/runs/${latest.id}` : '/'}?notice=${encodeURIComponent('Brak nowych newsletterów.')}`);
+          const latest = deps.archive.latestSnapshot();
+          redirect(res, `${latest ? `/runs/${latest.run.id}` : '/'}?notice=${encodeURIComponent('Brak nowych newsletterów.')}`);
         } catch (err) {
           logger.error({ err: errorMessage(err) }, 'Odświeżenie nieudane');
           redirect(res, `/?error=${encodeURIComponent(`Odświeżenie nieudane: ${errorMessage(err)}`)}`);
@@ -233,8 +191,8 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
         }
 
         const data = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
-        if (typeof data.messageId !== 'string' || data.messageId.trim() === '') {
-          sendJson(res, 400, { error: 'messageId jest wymagany.' });
+        if (typeof data.newsletterId !== 'string' || data.newsletterId.trim() === '') {
+          sendJson(res, 400, { error: 'newsletterId jest wymagany.' });
           return;
         }
         if (typeof data.question !== 'string' || data.question.trim() === '') {
@@ -246,7 +204,7 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
           return;
         }
 
-        const item = getItemByMessageId(deps.db, data.messageId);
+        const item = deps.archive.getNewsletter(data.newsletterId);
         if (!item) {
           sendJson(res, 404, { error: 'Nie znaleziono newslettera.' });
           return;
@@ -258,7 +216,7 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
 
         const startedAt = Date.now();
         const logContext = {
-          messageId: item.messageId,
+          newsletterId: item.newsletterId,
           subject: item.subject,
           model: deps.config.ollamaModel,
         };
@@ -292,7 +250,7 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
         return;
       }
 
-      sendHtml(res, 404, renderEmpty(deps.config, { error: 'Nie znaleziono strony.' }));
+      sendHtml(res, 404, renderEmpty({ error: 'Nie znaleziono strony.' }));
     } catch (err) {
       logger.error({ err: errorMessage(err) }, 'Błąd serwera');
       sendJson(res, 500, { error: 'Błąd serwera.' });
@@ -301,8 +259,8 @@ export function createReaderServer(deps: ReaderServerDeps): http.Server {
 }
 
 async function runStartupRefresh(deps: ReaderServerDeps): Promise<void> {
-  const refresh = deps.runDigest ?? runDigest;
-  await refresh(createDigestDeps(deps));
+  if (!deps.refresh) throw new Error('Newsletter refresh is not configured.');
+  await deps.refresh.refresh();
 }
 
 /** True when startup should skip IMAP fetch and just serve saved digests. */
@@ -325,12 +283,10 @@ if (isMain) {
     }
 
     const logger = createLogger(config.logLevel);
-    const db = openDb(config.dbPath);
-    initSchema(db);
-
+    const application = createApplication(config, logger);
     const port = Number(process.env.PORT ?? '3789');
     const skipRefresh = shouldSkipStartupRefresh();
-    const server = createReaderServer({ db, config, logger });
+    const server = createReaderServer(application);
 
     server.listen(port, '127.0.0.1', async () => {
       const url = `http://localhost:${port}`;
@@ -338,7 +294,7 @@ if (isMain) {
 
       if (!skipRefresh) {
         try {
-          await runStartupRefresh({ db, config, logger });
+          await runStartupRefresh(application);
         } catch (err) {
           logger.error({ err: errorMessage(err) }, 'Startowe pobieranie nieudane');
         }
@@ -346,12 +302,12 @@ if (isMain) {
         logger.info('Pominięto startowe pobieranie — otwieram zapisany digest');
       }
 
-      await openUrl(url);
+      await openExternal(url);
     });
 
     process.on('SIGINT', () => {
       server.close(() => {
-        db.close();
+        application.close();
         process.exit(0);
       });
     });

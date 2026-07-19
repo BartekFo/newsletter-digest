@@ -1,5 +1,10 @@
 import { ImapFlow } from 'imapflow';
-import type { AppConfig, FetchedMessage } from './types.js';
+import type { AppConfig } from './types.js';
+
+export interface GmailFetchedMessage {
+  raw: Buffer;
+  uid: number;
+}
 
 /**
  * Determine what to fetch based on the last-seen UID.
@@ -67,7 +72,7 @@ export async function fetchNewMessages(
   config: Pick<AppConfig, 'gmailUser' | 'gmailAppPassword' | 'imapFolder' | 'bootstrapDays'>,
   lastUid: number | null,
   client?: ImapClient,
-): Promise<FetchedMessage[]> {
+): Promise<GmailFetchedMessage[]> {
   const imap =
     client ??
     (new ImapFlow({
@@ -82,7 +87,7 @@ export async function fetchNewMessages(
       logger: false,
     }) as unknown as ImapClient);
 
-  const messages: FetchedMessage[] = [];
+  const messages: GmailFetchedMessage[] = [];
 
   try {
     await imap.connect();

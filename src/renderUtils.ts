@@ -14,8 +14,3 @@ export function safeUrl(value: unknown): string | null {
   if (typeof value !== 'string' || !/^https?:\/\//i.test(value)) return null;
   return normalizeArticleUrl(value);
 }
-
-export function gmailMessageUrl(messageId: string, gmailUser?: string): string {
-  const account = gmailUser ? encodeURIComponent(gmailUser) : '0';
-  return `https://mail.google.com/mail/u/${account}/#search/rfc822msgid:${encodeURIComponent(messageId)}`;
-}

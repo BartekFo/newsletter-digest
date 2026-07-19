@@ -1,11 +1,15 @@
 import { describe, it, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { openDb, initSchema, getLastUid, getItemsByRunId, getItemsByUids, isKnown } from '../src/store.js';
-import { renderHtml } from '../src/render.js';
-import { runDigest, type DigestDeps } from '../src/digest.js';
+import {
+  createDigestArchive,
+  openDb,
+  initSchema,
+} from '../src/store.js';
+import { renderDigestPage } from '../src/render.js';
+import { createNewsletterRefresh, type DigestDeps, type RefreshResult } from '../src/digest.js';
 import type { DigestEmailMessage } from '../src/email.js';
-import type { Db } from '../src/types.js';
+import type { Db, DigestMeta } from '../src/types.js';
 import {
   buildAppConfig,
   buildNewsletterFixture,
@@ -15,8 +19,6 @@ import {
 // ──────────────────────────────────────────────────────────────────────────────
 // Shared fakes & helpers
 // ──────────────────────────────────────────────────────────────────────────────
-
-const FIXED_NOW = new Date('2025-01-15T10:00:00.000Z');
 
 const FAKE_MAILS: readonly [NewsletterFixture, NewsletterFixture] = [
   buildNewsletterFixture(),
@@ -49,6 +51,20 @@ interface DigestTestControls {
 
 type TestDigestDeps = DigestDeps & DigestTestControls;
 
+function refreshNewsletters(deps: DigestDeps): Promise<RefreshResult> {
+  return createNewsletterRefresh(deps).refresh();
+}
+
+function assertRefreshSummary(
+  result: Awaited<ReturnType<typeof refreshNewsletters>>,
+  expected: { fetched: number; newItems: number; runId: number | null },
+): void {
+  assert.deepEqual(
+    { fetched: result.fetched, newItems: result.newItems, runId: result.runId },
+    expected,
+  );
+}
+
 function makeDeps(db: Db, overrides: Partial<DigestDeps> = {}): TestDigestDeps {
   let capturedHtml: string | null = null;
   let openFileCalled = false;
@@ -57,14 +73,29 @@ function makeDeps(db: Db, overrides: Partial<DigestDeps> = {}): TestDigestDeps {
   let sendEmailCalls = 0;
 
   const deps: TestDigestDeps = {
-    db,
+    archive: createDigestArchive(db),
     config: buildAppConfig(),
-    fetchNewMessages: async () => FAKE_MAILS.map((mail) => mail.message),
-    parseMail: async (raw) => {
-      const str = raw.toString();
-      const match = FAKE_MAILS.find((mail) => mail.message.raw.toString() === str);
-      if (!match) throw new Error(`parseMail: unknown raw: ${str}`);
-      return { ...match.parsed };
+    source: {
+      fetch: async () => ({
+        newsletters: FAKE_MAILS.map((mail) => ({
+          source: {
+            type: 'gmail',
+            externalId: mail.parsed.messageId,
+            cursor: String(mail.message.uid),
+            metadata: {
+              gmailMessageId: mail.parsed.messageId,
+              gmailUid: mail.message.uid,
+            },
+          },
+          sender: mail.parsed.sender,
+          subject: mail.parsed.subject,
+          date: mail.parsed.date,
+          html: mail.parsed.html,
+          link: mail.parsed.link,
+          isPaywalled: mail.parsed.isPaywalled,
+        })),
+        cursor: '102',
+      }),
     },
     extractText: async (html) => {
       const match = FAKE_MAILS.find((m) => m.parsed.html === html);
@@ -92,7 +123,7 @@ function makeDeps(db: Db, overrides: Partial<DigestDeps> = {}): TestDigestDeps {
         hnUrl: 'https://news.ycombinator.com/item?id=1',
       },
     ],
-    renderHtml,
+    renderHtml: renderDigestPage,
     buildDigestEmail: (items, meta) => ({
       subject: `Digest: ${items.length}`,
       html: `<p>${meta.newCount}</p>`,
@@ -109,7 +140,6 @@ function makeDeps(db: Db, overrides: Partial<DigestDeps> = {}): TestDigestDeps {
     openFile: async (_path) => {
       openFileCalled = true;
     },
-    now: () => FIXED_NOW,
     // Expose test-only helpers
     _getHtml: () => capturedHtml,
     _openFileCalled: () => openFileCalled,
@@ -125,7 +155,7 @@ function makeDeps(db: Db, overrides: Partial<DigestDeps> = {}): TestDigestDeps {
 // Tests
 // ──────────────────────────────────────────────────────────────────────────────
 
-describe('runDigest', () => {
+describe('Newsletter refresh use case', () => {
   let db: Db;
 
   beforeEach(() => {
@@ -135,33 +165,34 @@ describe('runDigest', () => {
 
   it('returns correct summary object', async () => {
     const deps = makeDeps(db);
-    const result = await runDigest(deps);
+    const result = await refreshNewsletters(deps);
 
-    assert.deepEqual(result, { fetched: 2, newItems: 2, runId: 1 });
+    assertRefreshSummary(result, { fetched: 2, newItems: 2, runId: 1 });
+    assert.equal(result.newsletterIds.length, 2);
   });
 
-  it('inserts both items in db with summaries set (commit-per-mail)', async () => {
+  it('publishes both items in db with summaries set', async () => {
     const deps = makeDeps(db);
-    await runDigest(deps);
+    await refreshNewsletters(deps);
 
     for (const mail of FAKE_MAILS) {
-      assert.equal(isKnown(db, mail.parsed.messageId), true, `isKnown(${mail.parsed.messageId})`);
+      assert.equal(deps.archive.isKnown({ type: 'gmail', externalId: mail.parsed.messageId }), true);
     }
 
-    const items = getItemsByUids(db, [101, 102]);
+    const items = deps.archive.latestSnapshot()?.items ?? [];
     assert.equal(items.length, 2);
 
     for (const item of items) {
-      const expected = FAKE_MAILS.find((mail) => mail.message.uid === item.uid);
-      assert.ok(expected, `fixture for uid ${item.uid}`);
-      assert.equal(item.summary, expected.summary, `summary for uid ${item.uid}`);
-      assert.equal(item.isPaywalled, expected.parsed.isPaywalled, `isPaywalled for uid ${item.uid}`);
+      const expected = FAKE_MAILS.find((mail) => String(mail.message.uid) === item.source.cursor);
+      assert.ok(expected, `fixture for source cursor ${item.source.cursor}`);
+      assert.equal(item.summary, expected.summary);
+      assert.equal(item.isPaywalled, expected.parsed.isPaywalled);
     }
   });
 
   it('rendered html contains both subjects and summaries', async () => {
     const deps = makeDeps(db);
-    await runDigest(deps);
+    await refreshNewsletters(deps);
 
     const html = deps._getHtml();
     assert.ok(html, 'writeFile should have been called');
@@ -176,7 +207,7 @@ describe('runDigest', () => {
 
   it('rendered html contains weather and HackerNews data', async () => {
     const deps = makeDeps(db);
-    await runDigest(deps);
+    await refreshNewsletters(deps);
 
     const html = deps._getHtml();
     assert.ok(html, 'writeFile should have been called');
@@ -191,8 +222,8 @@ describe('runDigest', () => {
       fetchTopStories: async () => null,
     });
 
-    const result = await runDigest(deps);
-    assert.deepEqual(result, { fetched: 2, newItems: 2, runId: 1 });
+    const result = await refreshNewsletters(deps);
+    assertRefreshSummary(result, { fetched: 2, newItems: 2, runId: 1 });
 
     const html = deps._getHtml();
     assert.ok(html, 'writeFile should have been called');
@@ -205,20 +236,20 @@ describe('runDigest', () => {
       fetchTopStories: async () => { throw new Error('HN API down'); },
     });
 
-    const result = await runDigest(deps);
-    assert.deepEqual(result, { fetched: 2, newItems: 2, runId: 1 });
+    const result = await refreshNewsletters(deps);
+    assertRefreshSummary(result, { fetched: 2, newItems: 2, runId: 1 });
   });
 
-  it('advances the UID cursor to the max uid after success', async () => {
+  it('advances the source cursor after success', async () => {
     const deps = makeDeps(db);
-    await runDigest(deps);
+    await refreshNewsletters(deps);
 
-    assert.equal(getLastUid(db), 102);
+    assert.equal(deps.archive.getCursor(), '102');
   });
 
   it('records a run row with ok=1', async () => {
     const deps = makeDeps(db);
-    await runDigest(deps);
+    await refreshNewsletters(deps);
 
     const row = db.prepare('SELECT * FROM runs ORDER BY id DESC LIMIT 1').get() as {
       ok: number;
@@ -232,7 +263,7 @@ describe('runDigest', () => {
 
   it('records weather and HackerNews with the run snapshot', async () => {
     const deps = makeDeps(db);
-    const result = await runDigest(deps);
+    const result = await refreshNewsletters(deps);
 
     const runId = result.runId;
     assert.ok(runId !== null);
@@ -249,18 +280,144 @@ describe('runDigest', () => {
 
   it('records run_items for the new snapshot', async () => {
     const deps = makeDeps(db);
-    const result = await runDigest(deps);
+    const result = await refreshNewsletters(deps);
 
     const runId = result.runId;
     assert.ok(runId !== null);
-    const items = getItemsByRunId(db, runId);
+    const items = deps.archive.getSnapshot(runId)?.items ?? [];
     assert.equal(items.length, 2);
-    assert.deepEqual(items.map((item) => item.messageId).sort(), ['msg-001@test', 'msg-002@test']);
+    assert.deepEqual(items.map((item) => item.source.externalId).sort(), ['msg-001@test', 'msg-002@test']);
+  });
+
+  it('recovers every newsletter after snapshot publication fails atomically', async () => {
+    db.exec(`
+      CREATE TRIGGER fail_snapshot_publication
+      BEFORE INSERT ON run_items
+      BEGIN
+        SELECT RAISE(ABORT, 'simulated publication failure');
+      END;
+    `);
+
+    await assert.rejects(
+      refreshNewsletters(makeDeps(db)),
+      /simulated publication failure/,
+    );
+
+    const failedArchive = createDigestArchive(db);
+    assert.equal(failedArchive.getCursor(), null, 'cursor must remain at the last recoverable snapshot');
+    assert.equal(failedArchive.latestSnapshot(), null, 'failed publication must not become visible');
+
+    db.exec('DROP TRIGGER fail_snapshot_publication');
+    const recovered = await refreshNewsletters(makeDeps(db));
+
+    assert.equal(recovered.newItems, 2);
+    assert.ok(recovered.runId !== null);
+    assert.equal(makeDeps(db).archive.getCursor(), '102');
+    assert.deepEqual(
+      makeDeps(db).archive.getSnapshot(recovered.runId)?.items.map((item) => item.source.externalId).sort(),
+      ['msg-001@test', 'msg-002@test'],
+    );
+  });
+
+  it('retries every newsletter after the source fails before publication', async () => {
+    const deps = makeDeps(db);
+    const fetchSuccessfully = deps.source.fetch;
+    let shouldFail = true;
+    deps.source = {
+      ...deps.source,
+      async fetch(cursor) {
+        if (shouldFail) {
+          shouldFail = false;
+          throw new Error('simulated parse failure');
+        }
+        return fetchSuccessfully(cursor);
+      },
+    };
+
+    await assert.rejects(refreshNewsletters(deps), /simulated parse failure/);
+    assert.equal(deps.archive.getCursor(), null);
+    assert.equal(deps.archive.latestSnapshot(), null);
+
+    const recovered = await refreshNewsletters(deps);
+    assert.equal(recovered.newItems, 2);
+    assert.equal(deps.archive.getCursor(), '102');
+    assert.deepEqual(
+      deps.archive.latestSnapshot()?.items.map((item) => item.source.externalId).sort(),
+      ['msg-001@test', 'msg-002@test'],
+    );
+  });
+
+  it('retries the complete batch after extraction fails before publication', async () => {
+    let shouldFail = true;
+    const deps = makeDeps(db, {
+      async extractText(html) {
+        if (shouldFail && html === FAKE_MAILS[1].parsed.html) {
+          shouldFail = false;
+          throw new Error('simulated extraction failure');
+        }
+        return FAKE_MAILS.find((mail) => mail.parsed.html === html)?.cleanText ?? '';
+      },
+    });
+
+    await assert.rejects(refreshNewsletters(deps), /simulated extraction failure/);
+    assert.equal(deps.archive.getCursor(), null);
+    assert.equal(deps.archive.latestSnapshot(), null);
+
+    const recovered = await refreshNewsletters(deps);
+    assert.equal(recovered.newItems, 2);
+    assert.equal(deps.archive.getCursor(), '102');
+    assert.deepEqual(
+      deps.archive.latestSnapshot()?.items.map((item) => item.source.externalId).sort(),
+      ['msg-001@test', 'msg-002@test'],
+    );
+  });
+
+  it('builds every delivery channel from metadata reloaded with the published snapshot', async () => {
+    db.exec(`
+      CREATE TRIGGER normalize_published_run
+      AFTER INSERT ON runs WHEN NEW.ok = 1
+      BEGIN
+        UPDATE runs SET
+          ran_at = '2030-01-02T03:04:05.000Z',
+          new_items = 7,
+          weather_json = '{"city":"Persisted City","temp":1,"code":2,"description":"Persisted weather","max":3,"min":-1,"precipProb":4}',
+          hackernews_json = '[{"title":"Persisted Story","url":"https://example.com/persisted","score":5,"comments":6,"hnUrl":"https://news.ycombinator.com/item?id=7"}]'
+        WHERE id = NEW.id;
+      END;
+    `);
+
+    const renderMetas: DigestMeta[] = [];
+    const emailMetas: DigestMeta[] = [];
+    const deps = makeDeps(db, {
+      renderHtml: (_items, meta) => {
+        renderMetas.push(meta);
+        return '<!doctype html>';
+      },
+      buildDigestEmail: (_items, meta) => {
+        emailMetas.push(meta);
+        return { subject: 'Persisted', html: 'Persisted', text: 'Persisted' };
+      },
+    });
+    deps.config.sendDigestEmail = true;
+
+    const result = await refreshNewsletters(deps);
+    const renderMeta = renderMetas[0];
+    const emailMeta = emailMetas[0];
+
+    assert.ok(result.runId !== null);
+    assert.ok(renderMeta);
+    assert.ok(emailMeta);
+    assert.deepEqual(renderMeta, emailMeta);
+    assert.equal(renderMeta.ranAt, '2030-01-02T03:04:05.000Z');
+    assert.equal(renderMeta.newCount, 7);
+    assert.equal(renderMeta.runId, result.runId);
+    assert.equal(renderMeta.weather?.city, 'Persisted City');
+    assert.equal(renderMeta.hackernews?.[0]?.title, 'Persisted Story');
   });
 
   it('openFile is called after success', async () => {
     const deps = makeDeps(db);
-    await runDigest(deps);
+    await refreshNewsletters(deps);
 
     assert.equal(deps._openFileCalled(), true);
   });
@@ -269,7 +426,7 @@ describe('runDigest', () => {
     const deps = makeDeps(db);
     deps.config.sendDigestEmail = true;
 
-    await runDigest(deps);
+    await refreshNewsletters(deps);
 
     assert.equal(deps._sendEmailCalls(), 1);
     assert.deepEqual(deps._sentEmail(), {
@@ -287,18 +444,36 @@ describe('runDigest', () => {
     });
     deps.config.sendDigestEmail = true;
 
-    const result = await runDigest(deps);
+    const result = await refreshNewsletters(deps);
 
-    assert.deepEqual(result, { fetched: 2, newItems: 2, runId: 1 });
+    assertRefreshSummary(result, { fetched: 2, newItems: 2, runId: 1 });
     assert.equal(deps._openFileCalled(), true);
     const run = db.prepare('SELECT ok FROM runs WHERE id = 1').get() as { ok: number };
+    assert.equal(run.ok, 1);
+  });
+
+  it('keeps the published snapshot and continues email delivery when static export fails', async () => {
+    const deps = makeDeps(db, {
+      writeFile: async () => {
+        throw new Error('disk unavailable');
+      },
+    });
+    deps.config.sendDigestEmail = true;
+
+    const result = await refreshNewsletters(deps);
+
+    assert.ok(result.runId !== null);
+    assert.equal(deps.archive.getSnapshot(result.runId)?.items.length, 2);
+    assert.equal(deps._sendEmailCalls(), 1, 'email delivery should be independent from export');
+    assert.equal(deps._openFileCalled(), false, 'a missing export must not be opened');
+    const run = db.prepare('SELECT ok FROM runs WHERE id = ?').get(result.runId) as { ok: number };
     assert.equal(run.ok, 1);
   });
 
   it('does not email when delivery is disabled', async () => {
     const deps = makeDeps(db);
 
-    await runDigest(deps);
+    await refreshNewsletters(deps);
 
     assert.equal(deps._sendEmailCalls(), 0);
   });
@@ -308,12 +483,12 @@ describe('runDigest', () => {
       const deps = makeDeps(db);
 
       // First run
-      await runDigest(deps);
+      await refreshNewsletters(deps);
 
       // Second run — same fake fetch returns the same 2 messages
-      const result2 = await runDigest(deps);
+      const result2 = await refreshNewsletters(deps);
 
-      assert.deepEqual(result2, { fetched: 2, newItems: 0, runId: null });
+      assertRefreshSummary(result2, { fetched: 2, newItems: 0, runId: null });
 
       // Still exactly 2 rows in items table
       const count = (db.prepare('SELECT COUNT(*) AS c FROM items').get() as { c: number }).c;
@@ -328,8 +503,8 @@ describe('runDigest', () => {
       const deps = makeDeps(db);
       deps.config.sendDigestEmail = true;
 
-      await runDigest(deps);
-      await runDigest(deps);
+      await refreshNewsletters(deps);
+      await refreshNewsletters(deps);
 
       assert.equal(deps._sendEmailCalls(), 1);
     });
@@ -351,8 +526,8 @@ describe('runDigest', () => {
     it('does not reject — completes with both items and records ok=1', async () => {
       const deps = makeDeps(db, { summarize: failingSummarize });
 
-      const result = await runDigest(deps);
-      assert.deepEqual(result, { fetched: 2, newItems: 2, runId: 1 });
+      const result = await refreshNewsletters(deps);
+      assertRefreshSummary(result, { fetched: 2, newItems: 2, runId: 1 });
 
       const row = db.prepare('SELECT * FROM runs ORDER BY id DESC LIMIT 1').get() as { ok: number };
       assert.equal(row.ok, 1);
@@ -361,13 +536,13 @@ describe('runDigest', () => {
     it('first mail keeps its summary, second mail summary is null', async () => {
       const deps = makeDeps(db, { summarize: failingSummarize });
 
-      await runDigest(deps);
+      await refreshNewsletters(deps);
 
-      const items = getItemsByUids(db, [101, 102]);
+      const items = deps.archive.latestSnapshot()?.items ?? [];
       assert.equal(items.length, 2);
 
-      const first = items.find((i) => i.uid === 101);
-      const second = items.find((i) => i.uid === 102);
+      const first = items.find((i) => i.source.cursor === '101');
+      const second = items.find((i) => i.source.cursor === '102');
       assert.ok(first);
       assert.ok(second);
       assert.equal(first.summary, FAKE_MAILS[0].summary);
@@ -377,7 +552,7 @@ describe('runDigest', () => {
     it('failed-summary item still appears in the digest with a placeholder', async () => {
       const deps = makeDeps(db, { summarize: failingSummarize });
 
-      await runDigest(deps);
+      await refreshNewsletters(deps);
 
       const html = deps._getHtml();
       assert.ok(html, 'writeFile should have been called');
@@ -388,9 +563,9 @@ describe('runDigest', () => {
     it('cursor IS advanced past the failed mail', async () => {
       const deps = makeDeps(db, { summarize: failingSummarize });
 
-      await runDigest(deps);
+      await refreshNewsletters(deps);
 
-      assert.equal(getLastUid(db), 102);
+      assert.equal(deps.archive.getCursor(), '102');
     });
   });
 });

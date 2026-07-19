@@ -1,261 +1,196 @@
-import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { test } from 'node:test';
 
-import {
-  openDb,
-  initSchema,
-  getLastUid,
-  setLastUid,
-  isKnown,
-  insertItem,
-  setSummary,
-  recordRun,
-  getItemsByUids,
-  getItemByMessageId,
-  addRunItems,
-  getItemsByRunId,
-  getLatestNonEmptyRun,
-  getRunSummaries,
-} from '../src/store.js';
-import type { Db } from '../src/types.js';
+import { createDigestArchive, initSchema, openDb } from '../src/store.js';
 import { buildDigestItem } from './builders.js';
 
-const SAMPLE_ITEM = buildDigestItem();
+const ITEM = buildDigestItem();
 
-function freshDb(): Db {
+test('fresh archive uses source-neutral item and snapshot relations', () => {
   const db = openDb(':memory:');
   initSchema(db);
-  return db;
-}
 
-test('openDb returns a better-sqlite3 instance', () => {
-  const db = openDb(':memory:');
-  assert.ok(db);
-  assert.equal(typeof db.prepare, 'function');
+  const itemColumns = (db.prepare('PRAGMA table_info(items)').all() as { name: string }[])
+    .map((row) => row.name);
+  const relationColumns = (db.prepare('PRAGMA table_info(run_items)').all() as { name: string }[])
+    .map((row) => row.name);
+
+  assert.ok(itemColumns.includes('newsletter_id'));
+  assert.ok(itemColumns.includes('source_metadata_json'));
+  assert.ok(!itemColumns.includes('message_id'));
+  assert.ok(!itemColumns.includes('uid'));
+  assert.deepEqual(relationColumns.filter((name) => name !== 'run_id'), ['newsletter_id', 'position']);
   db.close();
 });
 
-test('initSchema creates tables; calling twice does not throw', () => {
-  const db = openDb(':memory:');
-  initSchema(db);
-  initSchema(db); // idempotent
-
-  const tables = (db
-    .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-    .all() as { name: string }[])
-    .map((r) => r.name);
-
-  assert.ok(tables.includes('items'));
-  assert.ok(tables.includes('run_items'));
-  assert.ok(tables.includes('state'));
-  assert.ok(tables.includes('runs'));
-  db.close();
-});
-
-test('initSchema migrates legacy items table with is_paywalled column', () => {
+test('legacy Gmail archive migrates without losing snapshots, cursor or deep-link metadata', () => {
   const db = openDb(':memory:');
   db.exec(`
     CREATE TABLE items (
       message_id TEXT PRIMARY KEY,
-      uid        INTEGER,
-      sender     TEXT,
-      subject    TEXT,
-      date       TEXT,
+      newsletter_id TEXT,
+      uid INTEGER,
+      sender TEXT,
+      subject TEXT,
+      date TEXT,
       clean_text TEXT,
-      summary    TEXT,
-      link       TEXT,
+      summary TEXT,
+      link TEXT,
+      is_paywalled INTEGER DEFAULT 0,
       created_at TEXT
     );
+    CREATE TABLE state (key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ran_at TEXT,
+      fetched INTEGER,
+      new_items INTEGER,
+      duration_ms INTEGER,
+      ok INTEGER
+    );
+    CREATE TABLE run_items (
+      run_id INTEGER NOT NULL,
+      message_id TEXT NOT NULL,
+      PRIMARY KEY (run_id, message_id)
+    );
+    INSERT INTO items VALUES (
+      '<legacy@example.com>', 'newsletter-a', 42, 'Legacy', 'Preserved first',
+      '2026-07-01T08:00:00Z', 'Body', 'Summary', 'https://example.com', 1, datetime('now')
+    );
+    INSERT INTO items VALUES (
+      '<legacy-second@example.com>', 'newsletter-z', 43, 'Legacy', 'Preserved second',
+      '2026-07-01T08:00:00Z', 'Body 2', 'Summary 2', null, 0, datetime('now')
+    );
+    INSERT INTO state VALUES ('last_uid', '43');
+    INSERT INTO runs VALUES (1, datetime('now'), 2, 2, 10, 1);
+    INSERT INTO run_items VALUES (1, '<legacy@example.com>');
+    INSERT INTO run_items VALUES (1, '<legacy-second@example.com>');
   `);
 
   initSchema(db);
+  const archive = createDigestArchive(db);
+  const snapshot = archive.getSnapshot(1);
+  const item = snapshot?.items[0];
 
-  const columns = (db.prepare('PRAGMA table_info(items)').all() as { name: string }[])
-    .map((r) => r.name);
-  assert.ok(columns.includes('is_paywalled'), 'is_paywalled column missing');
-  db.close();
+  assert.ok(item);
+  assert.match(item.newsletterId, /^newsletter-/);
+  assert.deepEqual(snapshot?.items.map((candidate) => candidate.subject), ['Preserved second', 'Preserved first']);
+  assert.equal(item.subject, 'Preserved second');
+  assert.equal(item.isPaywalled, false);
+  assert.equal(item.source.type, 'gmail');
+  assert.equal(item.source.externalId, '<legacy-second@example.com>');
+  assert.equal(item.source.metadata.gmailMessageId, '<legacy-second@example.com>');
+  assert.equal(item.source.metadata.gmailUid, 43);
+  assert.equal(archive.getCursor(), '43');
+  assert.equal(db.prepare("SELECT 1 FROM state WHERE key = 'last_uid'").get(), undefined);
+  archive.close();
 });
 
-test('getLastUid returns null on fresh db', () => {
-  const db = freshDb();
-  assert.equal(getLastUid(db), null);
-  db.close();
+test('existing source-neutral relations gain positions that preserve legacy equal-date order', () => {
+  const db = openDb(':memory:');
+  db.exec(`
+    CREATE TABLE state (key TEXT PRIMARY KEY, value TEXT);
+    CREATE TABLE runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ran_at TEXT,
+      fetched INTEGER,
+      new_items INTEGER,
+      duration_ms INTEGER,
+      ok INTEGER,
+      weather_json TEXT,
+      hackernews_json TEXT
+    );
+    CREATE TABLE items (
+      newsletter_id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL,
+      source_external_id TEXT NOT NULL,
+      source_cursor TEXT NOT NULL,
+      source_metadata_json TEXT NOT NULL,
+      sender TEXT,
+      subject TEXT,
+      date TEXT,
+      clean_text TEXT,
+      summary TEXT,
+      link TEXT,
+      is_paywalled INTEGER DEFAULT 0,
+      created_at TEXT
+    );
+    CREATE TABLE run_items (
+      run_id INTEGER NOT NULL,
+      newsletter_id TEXT NOT NULL,
+      PRIMARY KEY (run_id, newsletter_id)
+    );
+    INSERT INTO runs VALUES (1, '2026-07-01T10:00:00Z', 2, 2, 10, 1, null, null);
+    INSERT INTO items VALUES
+      ('newsletter-a', 'gmail', 'first', '1', '{"gmailUid":1}', 'Sender', 'First relation', '2026-07-01T08:00:00Z', 'First', null, null, 0, datetime('now')),
+      ('newsletter-z', 'gmail', 'second', '2', '{"gmailUid":2}', 'Sender', 'Second relation', '2026-07-01T08:00:00Z', 'Second', null, null, 0, datetime('now'));
+    INSERT INTO run_items VALUES (1, 'newsletter-a');
+    INSERT INTO run_items VALUES (1, 'newsletter-z');
+  `);
+
+  initSchema(db);
+  const archive = createDigestArchive(db);
+
+  assert.deepEqual(
+    archive.getSnapshot(1)?.items.map((item) => item.subject),
+    ['Second relation', 'First relation'],
+  );
+  const positions = db.prepare('SELECT position FROM run_items ORDER BY rowid').all() as { position: number }[];
+  assert.deepEqual(positions.map((row) => row.position), [1, 0]);
+  archive.close();
 });
 
-test('setLastUid then getLastUid returns the number', () => {
-  const db = freshDb();
-  setLastUid(db, 42);
-  assert.equal(getLastUid(db), 42);
-  db.close();
-});
-
-test('setLastUid overwrites previous value', () => {
-  const db = freshDb();
-  setLastUid(db, 42);
-  setLastUid(db, 99);
-  assert.equal(getLastUid(db), 99);
-  db.close();
-});
-
-test('insertItem returns true for a new item', () => {
-  const db = freshDb();
-  const result = insertItem(db, SAMPLE_ITEM);
-  assert.equal(result, true);
-  db.close();
-});
-
-test('insertItem returns false for a duplicate messageId', () => {
-  const db = freshDb();
-  insertItem(db, SAMPLE_ITEM);
-  const result = insertItem(db, SAMPLE_ITEM);
-  assert.equal(result, false);
-  db.close();
-});
-
-test('insertItem duplicate does not create a second row', () => {
-  const db = freshDb();
-  insertItem(db, SAMPLE_ITEM);
-  insertItem(db, SAMPLE_ITEM);
-  const count = (db.prepare('SELECT COUNT(*) as c FROM items').get() as { c: number }).c;
-  assert.equal(count, 1);
-  db.close();
-});
-
-test('insertItem stores and reads isPaywalled flag', () => {
-  const db = freshDb();
-  const item = buildDigestItem({ isPaywalled: true });
-
-  insertItem(db, item);
-
-  const found = getItemByMessageId(db, item.messageId);
-  assert.ok(found);
-  assert.equal(found.isPaywalled, true);
-  db.close();
-});
-
-test('isKnown returns false when item not in db', () => {
-  const db = freshDb();
-  assert.equal(isKnown(db, SAMPLE_ITEM.messageId), false);
-  db.close();
-});
-
-test('isKnown returns true after insertItem', () => {
-  const db = freshDb();
-  insertItem(db, SAMPLE_ITEM);
-  assert.equal(isKnown(db, SAMPLE_ITEM.messageId), true);
-  db.close();
-});
-
-test('setSummary updates the summary for a known item', () => {
-  const db = freshDb();
-  insertItem(db, SAMPLE_ITEM);
-  setSummary(db, SAMPLE_ITEM.messageId, 'A great summary');
-  const row = db.prepare('SELECT summary FROM items WHERE message_id = ?').get(SAMPLE_ITEM.messageId) as {
-    summary: string | null;
-  };
-  assert.equal(row.summary, 'A great summary');
-  db.close();
-});
-
-test('recordRun appends a row to runs', () => {
-  const db = freshDb();
-  const runId = recordRun(db, { fetched: 10, newItems: 3, durationMs: 500, ok: true });
-  const count = (db.prepare('SELECT COUNT(*) as c FROM runs').get() as { c: number }).c;
-  assert.equal(count, 1);
-  assert.equal(runId, 1);
-  db.close();
-});
-
-test('recordRun stores ok=1 for true and ok=0 for false', () => {
-  const db = freshDb();
-  recordRun(db, { fetched: 5, newItems: 0, durationMs: 100, ok: true });
-  recordRun(db, { fetched: 5, newItems: 0, durationMs: 200, ok: false });
-  const rows = db.prepare('SELECT ok FROM runs ORDER BY id').all() as { ok: number }[];
-  assert.deepEqual(rows, [{ ok: 1 }, { ok: 0 }]);
-  db.close();
-});
-
-test('getItemsByUids returns matching items in camelCase shape', () => {
-  const db = freshDb();
-  const item2 = buildDigestItem({ messageId: '<test-2@example.com>', uid: 102 });
-  const item3 = buildDigestItem({ messageId: '<test-3@example.com>', uid: 103 });
-  insertItem(db, SAMPLE_ITEM);
-  insertItem(db, item2);
-  insertItem(db, item3);
-
-  const results = getItemsByUids(db, [101, 103]);
-  assert.equal(results.length, 2);
-
-  const uids = results.map((r) => r.uid).sort();
-  assert.deepEqual(uids, [101, 103]);
-
-  // verify camelCase shape
-  const first = results[0];
-  assert.ok(first);
-  assert.ok('messageId' in first);
-  assert.ok('cleanText' in first);
-  assert.ok(!('message_id' in first));
-  assert.ok(!('clean_text' in first));
-  db.close();
-});
-
-test('getItemsByUids returns empty array for empty uids list', () => {
-  const db = freshDb();
-  const results = getItemsByUids(db, []);
-  assert.deepEqual(results, []);
-  db.close();
-});
-
-test('getItemByMessageId returns matching item or null', () => {
-  const db = freshDb();
-  insertItem(db, SAMPLE_ITEM);
-
-  const found = getItemByMessageId(db, SAMPLE_ITEM.messageId);
-  assert.ok(found);
-  assert.equal(found.messageId, SAMPLE_ITEM.messageId);
-  assert.equal(found.cleanText, SAMPLE_ITEM.cleanText);
-  assert.equal(getItemByMessageId(db, '<missing@example.com>'), null);
-  db.close();
-});
-
-test('addRunItems links a run to items and getItemsByRunId returns snapshot items', () => {
-  const db = freshDb();
-  const item2 = buildDigestItem({
-    messageId: '<test-2@example.com>',
-    uid: 102,
+test('archive publishes and reads a complete snapshot through internal identity', () => {
+  const db = openDb(':memory:');
+  initSchema(db);
+  const archive = createDigestArchive(db);
+  const second = buildDigestItem({
+    newsletterId: 'newsletter-test-2',
+    source: {
+      type: 'gmail',
+      externalId: '<test-2@example.com>',
+      cursor: '102',
+      metadata: { gmailMessageId: '<test-2@example.com>', gmailUid: 102 },
+    },
     subject: 'Second',
   });
-  insertItem(db, SAMPLE_ITEM);
-  insertItem(db, item2);
 
-  const runId = recordRun(db, { fetched: 2, newItems: 2, durationMs: 10, ok: true });
-  addRunItems(db, runId, [SAMPLE_ITEM.messageId, item2.messageId]);
+  const runId = archive.publishSnapshot({
+    items: [ITEM, second],
+    cursor: '102',
+    run: {
+      fetched: 2,
+      newItems: 2,
+      durationMs: 10,
+      ok: true,
+      weather: { city: 'Testowo', temp: 12, code: 3, description: 'Pochmurno', max: 15, min: 7, precipProb: 40 },
+      hackernews: [{ title: 'Story', url: 'https://example.com', score: 1, comments: 2, hnUrl: 'https://news.ycombinator.com/item?id=1' }],
+    },
+  });
 
-  const items = getItemsByRunId(db, runId);
-  assert.equal(items.length, 2);
-  assert.deepEqual(items.map((item) => item.messageId).sort(), [SAMPLE_ITEM.messageId, item2.messageId].sort());
-  db.close();
+  assert.equal(archive.getCursor(), '102');
+  assert.equal(archive.isKnown(ITEM.source), true);
+  assert.equal(archive.getNewsletter(ITEM.newsletterId)?.subject, ITEM.subject);
+  assert.equal(archive.getNewsletter(ITEM.source.externalId), null, 'legacy source ID is not a reader key');
+  assert.deepEqual(
+    archive.getSnapshot(runId)?.items.map((item) => item.newsletterId).sort(),
+    [ITEM.newsletterId, second.newsletterId].sort(),
+  );
+  assert.equal(archive.latestSnapshot()?.run.weather?.city, 'Testowo');
+  assert.equal(archive.listSnapshots()[0]?.hackernews?.[0]?.title, 'Story');
+  archive.close();
 });
 
-test('getRunSummaries and getLatestNonEmptyRun ignore empty technical runs', () => {
-  const db = freshDb();
-  insertItem(db, SAMPLE_ITEM);
+test('failed refresh records technical diagnostics without creating a visible snapshot', () => {
+  const db = openDb(':memory:');
+  initSchema(db);
+  const archive = createDigestArchive(db);
 
-  const emptyRunId = recordRun(db, { fetched: 0, newItems: 0, durationMs: 5, ok: true });
-  const nonEmptyRunId = recordRun(db, { fetched: 1, newItems: 1, durationMs: 10, ok: true });
-  addRunItems(db, nonEmptyRunId, [SAMPLE_ITEM.messageId]);
+  archive.recordFailedRefresh({ fetched: 1, newItems: 0, durationMs: 5, ok: false });
 
-  const summaries = getRunSummaries(db);
-  assert.equal(summaries.length, 1);
-  const summary = summaries[0];
-  assert.ok(summary);
-  assert.equal(summary.id, nonEmptyRunId);
-  assert.equal(summary.newItems, 1);
-  assert.equal(summary.itemCount, 1);
-  assert.notEqual(summary.id, emptyRunId);
-
-  const latest = getLatestNonEmptyRun(db);
-  assert.ok(latest);
-  assert.equal(latest.id, nonEmptyRunId);
-  db.close();
+  assert.equal(archive.latestSnapshot(), null);
+  assert.deepEqual(archive.listSnapshots(), []);
+  const row = db.prepare('SELECT ok FROM runs').get() as { ok: number };
+  assert.equal(row.ok, 0);
+  archive.close();
 });

@@ -7,12 +7,14 @@ import {
   type DigestEmailDelivery,
   type DigestEmailTransport,
 } from '../src/email.js';
-import type { AppConfig } from '../src/types.js';
+import { gmailMessageIdFromMetadata, gmailMessageUrl } from '../src/gmailSource.js';
+import type { AppConfig, DigestMeta } from '../src/types.js';
+import { buildDigestItem } from './builders.js';
 
 const ITEMS = [
-  {
-    messageId: '<digest@example.com>',
-    uid: 7,
+  buildDigestItem({
+    newsletterId: 'newsletter-email-test',
+    source: { type: 'gmail', externalId: '<digest@example.com>', cursor: '7', metadata: { gmailMessageId: '<digest@example.com>', gmailUid: 7 } },
     sender: 'Example Newsletter <hello@example.com>',
     subject: 'A useful article',
     date: '2026-07-18T08:30:00.000Z',
@@ -20,13 +22,19 @@ const ITEMS = [
     summary: 'Krótkie podsumowanie artykułu.',
     link: 'https://example.com/article',
     isPaywalled: false,
-  },
+  }),
 ];
 
-const META = {
+const META: DigestMeta = {
   ranAt: '2026-07-18T10:00:00.000Z',
   newCount: 1,
-  gmailUser: 'reader@gmail.com',
+  resolveSourceLink: (source) => {
+    const messageId = gmailMessageIdFromMetadata(source.metadata);
+    return messageId ? {
+      url: gmailMessageUrl(messageId, 'reader@gmail.com'),
+      label: 'Otwórz w Gmailu',
+    } : null;
+  },
   weather: {
     city: 'Warszawa',
     temp: 24,
@@ -54,6 +62,7 @@ test('builds an email-safe digest with summaries and useful links', () => {
   assert.match(email.html, /Krótkie podsumowanie artykułu/);
   assert.match(email.html, /https:\/\/example\.com\/article/);
   assert.match(email.html, /mail\.google\.com/);
+  assert.match(email.html, /Otwórz w Gmailu/);
   assert.match(email.html, /Warszawa/);
   assert.match(email.html, /An interesting HN story/);
   assert.match(email.text, /Krótkie podsumowanie artykułu/);

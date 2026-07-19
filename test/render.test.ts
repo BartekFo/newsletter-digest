@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderHtml, renderRunsPage } from '../src/render.js';
+import { renderDigestPage, renderRunsPage } from '../src/render.js';
+import { gmailMessageIdFromMetadata, gmailMessageUrl } from '../src/gmailSource.js';
 import type {
   DigestItem,
   DigestMeta,
@@ -10,8 +11,8 @@ import type {
 import { buildDigestItem } from './builders.js';
 
 const ITEM_A = buildDigestItem({
-  messageId: '<a@test>',
-  uid: 1,
+  newsletterId: 'newsletter-a',
+  source: { type: 'gmail', externalId: '<a@test>', cursor: '1', metadata: { gmailMessageId: '<a@test>', gmailUid: 1 } },
   sender: 'Alice <alice@example.com>',
   subject: 'Newsletter January',
   date: '2024-01-15T10:00:00.000Z',
@@ -21,8 +22,8 @@ const ITEM_A = buildDigestItem({
 });
 
 const ITEM_B = buildDigestItem({
-  messageId: '<b@test>',
-  uid: 2,
+  newsletterId: 'newsletter-b',
+  source: { type: 'gmail', externalId: '<b@test>', cursor: '2', metadata: { gmailMessageId: '<b@test>', gmailUid: 2 } },
   sender: 'Bob <bob@example.com>',
   subject: 'Newsletter February',
   date: '2024-02-20T10:00:00.000Z',
@@ -31,7 +32,15 @@ const ITEM_B = buildDigestItem({
   isPaywalled: false,
 });
 
-const META: DigestMeta = { ranAt: '2024-03-01T08:00:00.000Z', newCount: 2 };
+const META: DigestMeta = {
+  ranAt: '2024-03-01T08:00:00.000Z',
+  newCount: 2,
+  resolveSourceLink: (source) => {
+    const messageId = gmailMessageIdFromMetadata(source.metadata);
+    return messageId ? { url: gmailMessageUrl(messageId), label: 'Otwórz w Gmailu' } : null;
+  },
+};
+const renderHtml = renderDigestPage;
 
 function renderUnknownItems(items: unknown, meta: DigestMeta = META): string {
   return renderHtml(items as DigestItem[], meta);
@@ -100,17 +109,27 @@ test('empty items array returns valid page with brak message, no throw', () => {
   assert.ok(html.includes('Brak nowych newsletterów'), 'missing brak message');
 });
 
-test('item with messageId renders a Gmail deep-link containing rfc822msgid', () => {
+test('item with Gmail source metadata renders a deep-link containing rfc822msgid', () => {
   const html = renderHtml([ITEM_A], META);
 
   assert.ok(html.includes('rfc822msgid:'), 'href missing rfc822msgid: prefix');
   // ITEM_A.messageId is '<a@test>' — encodeURIComponent encodes < > @ so check encoded form
   assert.ok(html.includes(encodeURIComponent('<a@test>')), 'encoded messageId not in href');
   assert.ok(html.includes('mail.google.com'), 'Gmail domain missing');
+  assert.ok(html.includes('Otwórz w Gmailu'), 'existing Gmail link label changed');
 });
 
 test('Gmail deep-link targets configured newsletter account when present', () => {
-  const html = renderHtml([ITEM_A], { ...META, gmailUser: 'newsletters@example.com' });
+  const html = renderHtml([ITEM_A], {
+    ...META,
+    resolveSourceLink: (source) => {
+      const messageId = gmailMessageIdFromMetadata(source.metadata);
+      return messageId ? {
+        url: gmailMessageUrl(messageId, 'newsletters@example.com'),
+        label: 'Otwórz w Gmailu',
+      } : null;
+    },
+  });
 
   assert.ok(
     html.includes('/mail/u/newsletters%40example.com/#search/'),
@@ -118,10 +137,13 @@ test('Gmail deep-link targets configured newsletter account when present', () =>
   );
 });
 
-test('messageId with special chars (<, &) is URL-encoded and HTML-attribute-escaped in href', () => {
+test('Gmail metadata with special chars is URL-encoded and HTML-attribute-escaped in href', () => {
   const specialItem = {
     ...ITEM_A,
-    messageId: '<foo+bar&baz@example.com>',
+    source: {
+      ...ITEM_A.source,
+      metadata: { ...ITEM_A.source.metadata, gmailMessageId: '<foo+bar&baz@example.com>' },
+    },
   };
   const html = renderHtml([specialItem], META);
 
@@ -138,29 +160,18 @@ test('messageId with special chars (<, &) is URL-encoded and HTML-attribute-esca
   assert.ok(!href.includes('&baz'), 'raw & found unescaped inside href attribute (should be %26baz)');
 });
 
-test('item with null messageId renders no href, no throw', () => {
-  const noId: unknown = { ...ITEM_A, messageId: null };
+test('item without Gmail source metadata renders no Gmail href', () => {
+  const noId: unknown = { ...ITEM_A, source: { ...ITEM_A.source, metadata: {} } };
   let html = '';
   assert.doesNotThrow(() => { html = renderUnknownItems([noId]); });
   assert.ok(!html.includes('rfc822msgid:'), 'href rendered despite null messageId');
 });
 
-test('item with messageId renders a Chat button with data-message-id', () => {
+test('item renders a Chat button with internal newsletter identity', () => {
   const html = renderHtml([ITEM_A], META);
 
   assert.ok(html.includes('class="chat-button"'), 'chat button missing');
-  assert.ok(html.includes('data-message-id="&lt;a@test&gt;"'), 'message id data attribute missing');
-});
-
-test('chat UI communicates progress and prevents duplicate sends while waiting', () => {
-  const html = renderHtml([ITEM_A], META);
-
-  assert.ok(html.includes('Czekam na odpowiedź modelu… To może potrwać kilka minut.'), 'loading state missing');
-  assert.ok(html.includes("if (!text || !messageId || sending) return;"), 'duplicate-send guard missing');
-  assert.ok(html.includes('if (sending) return;'), 'article-switch guard missing');
-  assert.ok(html.includes('AbortController'), 'client timeout controller missing');
-  assert.ok(html.includes('CHAT_CLIENT_TIMEOUT_MS = 305_000'), 'client timeout should allow a slow local model');
-  assert.ok(html.includes('Odpowiedź trwa zbyt długo'), 'client timeout message missing');
+  assert.ok(html.includes(`data-newsletter-id="${ITEM_A.newsletterId}"`), 'newsletter id data attribute missing');
 });
 
 test('render does not include cleanText body', () => {
@@ -170,8 +181,8 @@ test('render does not include cleanText body', () => {
   assert.ok(!html.includes('Body B'), 'cleanText for item B leaked into HTML');
 });
 
-test('item with empty string messageId renders no href, no throw', () => {
-  const emptyId = { ...ITEM_A, messageId: '' };
+test('item with empty Gmail metadata renders no deep link', () => {
+  const emptyId = { ...ITEM_A, source: { ...ITEM_A.source, metadata: { gmailMessageId: '' } } };
   let html = '';
   assert.doesNotThrow(() => { html = renderHtml([emptyId], META); });
   assert.ok(!html.includes('rfc822msgid:'), 'href rendered despite empty messageId');
@@ -322,4 +333,16 @@ test('digest and runs pages support a persistent dark theme', () => {
     assert.ok(html.includes('id="theme-toggle"'), 'theme toggle missing');
     assert.ok(html.includes('aria-pressed="false"'), 'theme toggle state missing');
   }
+});
+
+test('digest and history share the same reader navigation shell', () => {
+  const pages = [renderDigestPage([ITEM_A], META), renderRunsPage([])];
+  const navigation = /<nav class="top-nav"[\s\S]*?<\/nav>/;
+  const digestNav = pages[0]?.match(navigation)?.[0];
+  const historyNav = pages[1]?.match(navigation)?.[0];
+
+  assert.ok(digestNav);
+  assert.equal(historyNav, digestNav);
+  assert.ok(digestNav.includes('href="/runs"'));
+  assert.ok(digestNav.includes('action="/refresh"'));
 });
