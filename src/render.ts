@@ -1,7 +1,8 @@
 import { renderBrowserChatScript } from './browserChat.js';
 import { sortNewslettersNewestFirst } from './newsletterOrder.js';
 import { escapeHtml, safeUrl } from './renderUtils.js';
-import type { DigestItem, DigestMeta, HackerNewsStory, RunSummary, WeatherSummary } from './types.js';
+import type { DigestItem, DigestMeta, HackerNewsStory, ResolvedSourceLink, RunSummary, WeatherSummary } from './types.js';
+import type { ArchivePage } from './store.js';
 
 const THEME_CSS = `
   :root {
@@ -208,9 +209,204 @@ function renderNavigation(): string {
   return `<nav class="top-nav" aria-label="Nawigacja">
       <a href="/">Najnowszy</a>
       <a href="/runs">Historia</a>
+      <a href="/newsletters">Archiwum</a>
       <form method="post" action="/refresh"><button type="submit">Pobierz nowe</button></form>
       ${renderThemeToggle()}
     </nav>`;
+}
+
+export interface ArchiveFilterValues {
+  query?: string;
+  sender?: string;
+  from?: string;
+  to?: string;
+  paywall?: 'paid' | 'free';
+  summary?: 'with' | 'without';
+}
+
+export function renderArchivePage(
+  archivePage: ArchivePage,
+  error?: string,
+  filters: ArchiveFilterValues = {},
+): string {
+  const activeFilters: ArchiveFilterValues = {
+    ...(archivePage.criteria.query ? { query: archivePage.criteria.query } : {}),
+    ...filters,
+  };
+  const pageHref = (page: number): string => {
+    const params = new URLSearchParams();
+    if (activeFilters.query) params.set('q', activeFilters.query);
+    if (activeFilters.sender) params.set('sender', activeFilters.sender);
+    if (activeFilters.from) params.set('from', activeFilters.from);
+    if (activeFilters.to) params.set('to', activeFilters.to);
+    if (activeFilters.paywall) params.set('paywall', activeFilters.paywall);
+    if (activeFilters.summary) params.set('summary', activeFilters.summary);
+    params.set('page', String(page));
+    return `/newsletters?${params.toString()}`;
+  };
+  const rows = archivePage.items.length === 0
+    ? '<div class="empty-list">Brak newsletterów na tej stronie.</div>'
+    : `<div class="archive-items">
+${archivePage.items.map((item) => {
+      const paywall = item.isPaywalled ? '<span class="paywall-badge">Płatne</span>' : '';
+      const summary = item.summary == null
+        ? '<p class="archive-summary empty">(brak streszczenia)</p>'
+        : `<p class="archive-summary">${escapeHtml(item.summary)}</p>`;
+      return `<article class="archive-card">
+        <h2><a href="/newsletters/${encodeURIComponent(item.newsletterId)}">${escapeHtml(item.subject)}</a></h2>
+        <div class="archive-meta">${paywall}<span>${escapeHtml(item.sender)}</span><span aria-hidden="true">·</span><time>${escapeHtml(formatDate(item.date))}</time></div>
+        ${summary}
+      </article>`;
+    }).join('\n')}
+    </div>`;
+  const displayedTotalPages = Math.max(1, archivePage.totalPages);
+  const previous = archivePage.hasPrevious
+    ? `<a rel="prev" href="${escapeHtml(pageHref(archivePage.page - 1))}">Poprzednia</a>`
+    : '<span></span>';
+  const next = archivePage.hasNext
+    ? `<a rel="next" href="${escapeHtml(pageHref(archivePage.page + 1))}">Następna</a>`
+    : '<span></span>';
+
+  return renderReaderDocument({
+    title: 'Archiwum newsletterów',
+    styles: `
+  .archive-heading { margin-bottom: 28px; }
+  .archive-stats { display: flex; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 14px; margin: 22px 0 14px; }
+  .archive-items { display: flex; flex-direction: column; gap: 14px; }
+  .archive-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; box-shadow: var(--shadow); }
+  .archive-card h2 { font: 700 22px/1.25 var(--serif); margin: 0 0 10px; }
+  .archive-card h2 a { color: inherit; text-decoration: none; }
+  .archive-card h2 a:hover { color: var(--link); }
+  .archive-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: var(--muted); font-size: 13.5px; }
+  .archive-summary { color: var(--ink-soft); margin: 14px 0 0; }
+  .archive-summary.empty { color: var(--muted); font-style: italic; }
+  .paywall-badge { display: inline-flex; padding: 3px 8px; border: 1px solid var(--paid-border); border-radius: 6px; background: var(--paid-bg); color: var(--paid-ink); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+  .archive-pagination { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; margin-top: 22px; }
+  .archive-pagination > :last-child { justify-self: end; }
+  .archive-pagination a { color: var(--link); font-weight: 700; text-decoration: none; }
+  .archive-search { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 22px; }
+  .archive-search .wide { grid-column: 1 / -1; }
+  .archive-search label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; font-weight: 700; }
+  .archive-search input, .archive-search select { width: 100%; min-width: 0; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 12px; font: 15px var(--sans); }
+  .archive-filter-actions { display: flex; align-items: center; gap: 12px; grid-column: 1 / -1; }
+  .archive-search button { min-height: 40px; border: 1px solid var(--link); border-radius: 8px; background: var(--link); color: var(--on-accent); padding: 0 16px; font-weight: 700; cursor: pointer; }
+  .archive-search .reset { color: var(--link); font-size: 14px; font-weight: 700; }
+  @media (max-width: 540px) { .archive-search { grid-template-columns: 1fr; } .archive-search .wide { grid-column: auto; } }
+`,
+    pageHtml: `<header class="masthead archive-heading">
+      <h1>Archiwum</h1>
+      ${renderNavigation()}
+      <form class="archive-search" method="get" action="/newsletters">
+        <label class="wide">Szukaj
+          <input type="search" name="q" value="${escapeHtml(activeFilters.query ?? '')}" placeholder="Temat, nadawca, streszczenie lub treść">
+        </label>
+        <label>Nadawca
+          <select name="sender"><option value="">Wszyscy nadawcy</option>${archivePage.senders.map((sender) => `<option value="${escapeHtml(sender)}"${sender === activeFilters.sender ? ' selected' : ''}>${escapeHtml(sender)}</option>`).join('')}</select>
+        </label>
+        <label>Paywall
+          <select name="paywall"><option value="">Wszystkie</option><option value="paid"${activeFilters.paywall === 'paid' ? ' selected' : ''}>Tylko płatne</option><option value="free"${activeFilters.paywall === 'free' ? ' selected' : ''}>Bez płatnych</option></select>
+        </label>
+        <label>Od daty <input type="date" name="from" value="${escapeHtml(activeFilters.from ?? '')}"></label>
+        <label>Do daty <input type="date" name="to" value="${escapeHtml(activeFilters.to ?? '')}"></label>
+        <label>Dostępność streszczenia
+          <select name="summary"><option value="">Wszystkie</option><option value="with"${activeFilters.summary === 'with' ? ' selected' : ''}>Ze streszczeniem</option><option value="without"${activeFilters.summary === 'without' ? ' selected' : ''}>Bez streszczenia</option></select>
+        </label>
+        <div class="archive-filter-actions"><button type="submit">Zastosuj</button><a class="reset" href="/newsletters">Wyczyść filtry</a></div>
+      </form>
+      ${error ? `<div class="notice error">${escapeHtml(error)}</div>` : ''}
+    </header>
+    <main>
+      <div class="archive-stats"><span>Łącznie: <strong>${archivePage.total}</strong></span><span>Strona ${archivePage.page} z ${displayedTotalPages}</span></div>
+      ${rows}
+      <nav class="archive-pagination" aria-label="Strony archiwum">${previous}<span>Strona ${archivePage.page} z ${displayedTotalPages}</span>${next}</nav>
+    </main>`,
+  });
+}
+
+const CHAT_CSS = `
+  .chat-panel[hidden] { display: none; }
+  .chat-panel { position: fixed; inset: 0; z-index: 20; background: var(--overlay); display: flex; align-items: flex-end; justify-content: center; padding: 18px; }
+  .chat-box { width: min(720px, 100%); max-height: calc(100vh - 36px); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: var(--modal-shadow); display: flex; flex-direction: column; overflow: hidden; }
+  .chat-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+  .chat-title { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chat-close { appearance: none; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 24px; line-height: 1; padding: 2px 4px; }
+  .chat-log { flex: 1; min-height: 220px; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .chat-message { border-radius: 8px; padding: 10px 12px; font-size: 15px; white-space: pre-wrap; }
+  .chat-message.user { align-self: flex-end; max-width: 82%; background: var(--user-bg); color: var(--user-ink); }
+  .chat-message.assistant, .chat-message.loading { align-self: flex-start; max-width: 88%; background: var(--bg); color: var(--ink-soft); }
+  .chat-message.loading { color: var(--muted); font-style: italic; }
+  .chat-message.error { background: var(--error-bg); color: var(--error-ink); }
+  .chat-form { display: flex; gap: 10px; border-top: 1px solid var(--line); padding: 12px; }
+  .chat-form textarea { flex: 1; resize: vertical; min-height: 48px; max-height: 140px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 10px 12px; font: 15px/1.4 var(--sans); }
+  .chat-form button { appearance: none; border: 1px solid var(--link); border-radius: 8px; background: var(--link); color: var(--on-accent); cursor: pointer; padding: 0 16px; font: 700 14px/1 var(--sans); }
+  .chat-form button:disabled, .chat-form textarea:disabled { cursor: wait; opacity: .65; }
+  @media (max-width: 540px) { .chat-form { flex-direction: column; } .chat-form button { min-height: 42px; } }
+`;
+
+function renderChatPanel(): string {
+  return `<section class="chat-panel" id="chat-panel" hidden>
+  <div class="chat-box" role="dialog" aria-modal="true" aria-labelledby="chat-title">
+    <div class="chat-head">
+      <div class="chat-title" id="chat-title">Chat</div>
+      <button type="button" class="chat-close" aria-label="Zamknij">&times;</button>
+    </div>
+    <div class="chat-log" id="chat-log"></div>
+    <form class="chat-form" id="chat-form">
+      <textarea id="chat-question" name="question" required placeholder="Zapytaj o ten newsletter"></textarea>
+      <button type="submit">Wyślij</button>
+    </form>
+  </div>
+</section>`;
+}
+
+export function renderNewsletterPage(
+  item: DigestItem | null,
+  resolvedSourceLink: ResolvedSourceLink | null = null,
+): string {
+  if (!item) {
+    return renderReaderDocument({
+      title: 'Nie znaleziono newslettera',
+      styles: '',
+      pageHtml: `<header class="masthead"><h1>Nie znaleziono newslettera</h1>${renderNavigation()}</header>
+      <main><div class="empty-list">Newsletter nie istnieje albo link jest nieaktualny.</div></main>`,
+    });
+  }
+
+  const articleUrl = safeUrl(item.link);
+  const sourceUrl = safeUrl(resolvedSourceLink?.url);
+  const actions = [
+    ...(articleUrl ? [`<a href="${escapeHtml(articleUrl)}" target="_blank" rel="noopener">Otwórz artykuł</a>`] : []),
+    ...(sourceUrl ? [`<a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener">${escapeHtml(resolvedSourceLink?.label)}</a>`] : []),
+  ].join('');
+
+  return renderReaderDocument({
+    title: item.subject,
+    styles: `
+  .detail-masthead { margin-bottom: 28px; }
+  .detail { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 28px; box-shadow: var(--shadow); }
+  .detail h2 { margin: 0; font: 700 clamp(28px, 6vw, 40px)/1.15 var(--serif); }
+  .detail-meta { display: flex; flex-wrap: wrap; gap: 7px 12px; margin-top: 14px; color: var(--muted); font-size: 14px; }
+  .detail-summary { margin: 26px 0; padding: 18px; border-left: 3px solid var(--link); background: var(--bg); color: var(--ink-soft); }
+  .detail-summary.empty { color: var(--muted); font-style: italic; }
+  .detail-content { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-soft); }
+  .detail-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 24px 0; }
+  .detail-actions a, .detail-actions button { display: inline-flex; align-items: center; min-height: 38px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--link); font: 700 13px/1 var(--sans); text-decoration: none; cursor: pointer; }
+  .paywall-badge { display: inline-flex; padding: 3px 8px; border: 1px solid var(--paid-border); border-radius: 6px; background: var(--paid-bg); color: var(--paid-ink); font-size: 12px; font-weight: 800; text-transform: uppercase; }
+`,
+    pageHtml: `<header class="masthead detail-masthead"><h1>Newsletter</h1>${renderNavigation()}</header>
+    <main><article class="detail">
+      <h2>${escapeHtml(item.subject)}</h2>
+      <div class="detail-meta">
+        ${item.isPaywalled ? '<span class="paywall-badge">Płatne</span>' : '<span>Bezpłatne</span>'}
+        <strong>${escapeHtml(item.sender)}</strong><span aria-hidden="true">·</span><time>${escapeHtml(formatDate(item.date))}</time>
+      </div>
+      ${item.summary == null ? '<p class="detail-summary empty">Brak streszczenia.</p>' : `<p class="detail-summary">${escapeHtml(item.summary)}</p>`}
+      <div class="detail-actions">${actions}<button type="button" class="chat-button" data-newsletter-id="${escapeHtml(item.newsletterId)}" data-subject="${escapeHtml(item.subject)}">Chat</button></div>
+      <div class="detail-content">${escapeHtml(item.cleanText)}</div>
+    </article></main>`,
+    afterPage: renderChatPanel(),
+    scripts: renderBrowserChatScript(),
+  });
 }
 
 function renderReaderDocument(document: ReaderDocument): string {
@@ -224,6 +420,7 @@ ${THEME_BOOT_SCRIPT}
 <style>
 ${THEME_CSS}
 ${DOCUMENT_CSS}
+${CHAT_CSS}
 ${document.styles}
 </style>
 </head>
@@ -629,128 +826,6 @@ ${sorted.map(item => {
     letter-spacing: 0.03em;
   }
 
-  /* ---------- CHAT ---------- */
-  .chat-panel[hidden] { display: none; }
-  .chat-panel {
-    position: fixed;
-    inset: 0;
-    z-index: 20;
-    background: var(--overlay);
-    display: flex;
-    align-items: flex-end;
-    justify-content: center;
-    padding: 18px;
-  }
-  .chat-box {
-    width: min(720px, 100%);
-    max-height: min(760px, calc(100vh - 36px));
-    background: var(--surface);
-    border: 1px solid var(--line-strong);
-    border-radius: 8px;
-    box-shadow: var(--modal-shadow);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .chat-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 14px 16px;
-    border-bottom: 1px solid var(--line);
-  }
-  .chat-title {
-    font-weight: 700;
-    font-size: 15px;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .chat-close {
-    appearance: none;
-    border: 0;
-    background: transparent;
-    cursor: pointer;
-    color: var(--muted);
-    font-size: 24px;
-    line-height: 1;
-    padding: 2px 4px;
-  }
-  .chat-log {
-    flex: 1;
-    min-height: 220px;
-    overflow: auto;
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  .chat-message {
-    border-radius: 8px;
-    padding: 10px 12px;
-    font-size: 15px;
-    line-height: 1.45;
-    white-space: pre-wrap;
-  }
-  .chat-message.user {
-    align-self: flex-end;
-    max-width: 82%;
-    background: var(--user-bg);
-    color: var(--user-ink);
-  }
-  .chat-message.assistant {
-    align-self: flex-start;
-    max-width: 88%;
-    background: var(--bg);
-    color: var(--ink-soft);
-  }
-  .chat-message.error {
-    align-self: stretch;
-    background: var(--error-bg);
-    color: var(--error-ink);
-  }
-  .chat-message.loading {
-    align-self: flex-start;
-    background: var(--bg);
-    color: var(--muted);
-    font-style: italic;
-  }
-  .chat-form {
-    display: flex;
-    gap: 10px;
-    border-top: 1px solid var(--line);
-    padding: 12px;
-  }
-  .chat-form textarea {
-    flex: 1;
-    resize: vertical;
-    min-height: 48px;
-    max-height: 140px;
-    border: 1px solid var(--line-strong);
-    border-radius: 8px;
-    background: var(--surface);
-    color: var(--ink);
-    padding: 10px 12px;
-    font: 15px/1.4 var(--sans);
-  }
-  .chat-form button {
-    appearance: none;
-    border: 1px solid var(--link);
-    border-radius: 8px;
-    background: var(--link);
-    color: var(--on-accent);
-    cursor: pointer;
-    font: 700 14px/1 var(--sans);
-    padding: 0 16px;
-  }
-  .chat-form button:disabled,
-  .chat-form textarea:disabled {
-    cursor: wait;
-    opacity: 0.65;
-  }
-
   /* ---------- MOBILE ---------- */
   @media (max-width: 540px) {
     .card { padding: 20px; border-radius: 12px; }
@@ -758,8 +833,6 @@ ${sorted.map(item => {
     ol.hn-list li { padding: 14px 16px; gap: 12px; }
     .weather { padding: 12px 14px; }
     .weather .w-sep { display: none; }
-    .chat-form { flex-direction: column; }
-    .chat-form button { min-height: 42px; }
   }
 `,
     pageHtml: `
@@ -784,19 +857,7 @@ ${renderHackerNews(meta.hackernews)}
   </footer>
 
 `,
-    afterPage: `<section class="chat-panel" id="chat-panel" hidden>
-  <div class="chat-box" role="dialog" aria-modal="true" aria-labelledby="chat-title">
-    <div class="chat-head">
-      <div class="chat-title" id="chat-title">Chat</div>
-      <button type="button" class="chat-close" aria-label="Zamknij">&times;</button>
-    </div>
-    <div class="chat-log" id="chat-log"></div>
-    <form class="chat-form" id="chat-form">
-      <textarea id="chat-question" name="question" required placeholder="Zapytaj o ten newsletter"></textarea>
-      <button type="submit">Wyślij</button>
-    </form>
-  </div>
-</section>`,
+    afterPage: renderChatPanel(),
     scripts: renderBrowserChatScript(),
   });
 }
